@@ -1,2 +1,2 @@
 # minitax
-Taxonomic assigment of long metagenomic reads with minimap2
+Taxonomic assignement of long metagenomic reads with minimap2
