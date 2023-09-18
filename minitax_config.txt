@@ -1,0 +1,30 @@
+argument	value	step	description
+platform	Illumina	both	Either: 'Illumina', 'PacBio' or 'ONT'
+db	all_NCBI_genomes	both	Either: 'proGcontigs' or 'EMUdb'
+db.dir	/mnt/e/data/databases/all_NCBI_genomes	both	absolute path of database home directory
+project	MCM_Zymo_D6330_20221110	optional	project identifier
+Vregion	V1_V2	optional	optional
+indir	/mnt/d/Gemini/Microbacontrol/20221110_microbacontrol_v1_v2/fastq	minimap2	absolute path to directory of fastq files
+outdir	NA	both	will be composed from platform, db, and project arguments, this will be the output directory (will be created and files here will be ovrewritten)
+debug	FALSE	both	if there was a problem, try to show in which step
+mm2_path	/mnt/d/ubuntu/programs/mm2-fast/minimap2	minimap2	absolute path of minimap2
+mm2_index	all_NCBI_genomes.idx	minimap2	filename of minimap2 index, relative to db.dir
+mm2_ref	NA	minimap2	filename of minimap2 reference database (.fasta), if there's no index yet (relative to db.dir)
+fastq_pair_pattern	_L001	minimap2	In case of Illumina paired-end seq what is the common pattern for the pairs? Usually it is L0001, and what is after 
+fastq_suffix	_001.fastq.gz	minimap2	extension of fastq files
+Nsec	20	minimap2	number of secondary alignments to keep in minimap2
+nproc	42	both	number of cores to use
+minitax.dir	/mnt/e/my.R.packages/minitax	minitax	absolute path of minitax home directory
+misc.dir	/mnt/e/my.R.packages/Rlyeh-main	minitax	absolute path of minitax home directory
+metadata	metadata.tsv	minitax	tab-separated metadata file, the 'sample' coulmn should be the same as the the bamfiles (without the 'pattern' argumetn, i.e. file suffix)
+keep.highest.mapq.aln.only	T	minitax	in case of multi-mapping reads, keep the one with the highest MAPQ value only
+crop.na.tax	F	minitax	???
+multicore	T	minitax	Run minitax in multicore?
+saveRAM	F	minitax	Frequently save intermediate files and load them back in, or be as fast as possible?
+mapq.filt	NA	minitax	If other than NA, filter out alignments with MAPQ values lower than this
+outputs	bam.sum, alignments_w_taxa, best_alignments_w_taxa, sum_taxa, sum_LCA_taxa		
+methods	BestAln;SpeciesEstimate	minitax	
+pardir	NA	minitax	directory of bamfiles
+pattern	.bam	minitax	pattern of bamfiles (for subseting)
+CIGAR_points	match_score = 1; mismatch_score = -3; insertion_score = -2; deletion_score = -2; gap_opening_penalty = -2; gap_extension_penalty = -1	minitax	rules for scoring the alignments
+best.mapq	T	minitax find the alignment with the highest mapq for each read before analysing CIGAR scores
