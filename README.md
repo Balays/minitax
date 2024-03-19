@@ -21,10 +21,10 @@ The configuration file is tab-separated file, and should contain the follwing in
 argument	value	step	description
 platform	ONT	both	Either: 'Illumina', 'PacBio' or 'ONT'
 db	'UHGV'	both	options: 'all_NCBI_genomes' or 'EMUdb' or 'UHGV'
-db.dir	/mnt/d/data/databases/UHGV	both	absolute path of database home directory
+db.dir	/mnt/d/data/databases/all_NCBI_genomes	both	absolute path of database home directory
 project	Toti_UHGV	optional	project identifier
 Vregion	V1_V2	optional	optional
-indir	/mnt/d/Gemini/Microbacontrol/20221110_microbacontrol_v1_v2/fastq	minimap2	absolute path to directory of fastq files
+indir	./fastq	minimap2	absolute path to directory of fastq files
 outdir	NA	both	will be composed from platform, db, and project arguments, this will be the output directory (will be created and files here will be ovrewritten)
 debug	FALSE	both	if there was a problem, try to show in which step
 mm2_path	/mnt/d/ubuntu/programs/mm2-fast/minimap2	minimap2	absolute path of minimap2
@@ -54,11 +54,11 @@ gunzip NCBI_genome_collection/all_NCBI_genomes_sequence_lengths.zip
 minitax/download_ncbi_accessions.sh NCBI_genome_collection/all_NCBI_genomes_sequence_lengths.tsv
 
 ## Running the tool:
-Mappping part
+Mappping part  
 minitax/minitax.sh minitax_config_allNCBI.txt
 
-Finding the best taxonomic assignement for each read
-minitax/minitax.complete.R minitax_config_allNCBI.txt
+Finding the best taxonomic assignement for each read  
+minitax/minitax.complete.R minitax_config_NCBI.txt
 
 ## Outputs:
 The outputs include a .tsv file containing the counts for each sample
