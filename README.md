@@ -1,5 +1,5 @@
 # minitax
-Taxonomic assignement of long metagenomic reads with minimap2
+Taxonomic assignement of metagenomic reads using minimap2
 
 This tool uses the minimap2 aligner to map metagenomic reads to a selected database. 
 The database can be a collection of genomes from NCBI for WGS reads, or for 16S reads the databse of EMU (https://gitlab.com/treangenlab/emu) or SILVA (https://www.arb-silva.de/).
@@ -17,7 +17,7 @@ git clone https://github.com/Balays/minitax.git
 ```
 
 
-## Configuration file:
+## Configuration file
 The configuration file is tab-separated file, and should contain the follwing information and should look like this:
 
 argument	value	step	description  
@@ -34,7 +34,7 @@ gunzip NCBI_genome_collection/all_NCBI_genomes_sequence_lengths.zip
 minitax/download_ncbi_accessions.sh NCBI_genome_collection/all_NCBI_genomes_sequence_lengths.tsv*
 ```
 
-## Running the tool:
+## Running minitax
 Mappping part  
 ```
 minitax/minitax.sh minitax_config_allNCBI.txt
@@ -45,11 +45,11 @@ Finding the best taxonomic assignement for each read
 minitax/minitax.complete.R minitax_config_NCBI.txt
 ```
 
-## Outputs:
+## Outputs
 The outputs include a .tsv file containing the counts for each sample
 And an .rds file containing a phyloseq-object
 
-## R-pcakage Dependencies:
+## R-pcakage Dependencies
 Rsamtools
 readr
 tidyr
