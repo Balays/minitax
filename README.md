@@ -12,7 +12,7 @@ Finally it summarises the counts for the lowest taxonomic rank (species by defau
 
 ## Installing
 the program can be downloaded from github using  
-git clone https://github.com/Balays/minitax.git
+*git clone https://github.com/Balays/minitax.git*
 
 
 ## Configuration file:
@@ -50,15 +50,15 @@ CIGAR_points	match_score = 1; mismatch_score = -3; insertion_score = -2; deletio
 best.mapq	T	minitax find the alignment with the highest mapq for each read before analysing CIGAR scores
 
 ## Obtaining the database
-gunzip NCBI_genome_collection/all_NCBI_genomes_sequence_lengths.zip
-minitax/download_ncbi_accessions.sh NCBI_genome_collection/all_NCBI_genomes_sequence_lengths.tsv
+*gunzip NCBI_genome_collection/all_NCBI_genomes_sequence_lengths.zip*
+*minitax/download_ncbi_accessions.sh NCBI_genome_collection/all_NCBI_genomes_sequence_lengths.tsv*
 
 ## Running the tool:
 Mappping part  
-minitax/minitax.sh minitax_config_allNCBI.txt
+*minitax/minitax.sh minitax_config_allNCBI.txt*
 
 Finding the best taxonomic assignement for each read  
-minitax/minitax.complete.R minitax_config_NCBI.txt
+*minitax/minitax.complete.R minitax_config_NCBI.txt*
 
 ## Outputs:
 The outputs include a .tsv file containing the counts for each sample
