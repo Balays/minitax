@@ -11,7 +11,7 @@ If there are still multiple alignments with same mapq values, minitax processes 
 Finally it summarises the counts for the lowest taxonomic rank (species by default)
 
 ## Installing
-the program can be downloaded from github using
+the program can be downloaded from github using  
 git clone https://github.com/Balays/minitax.git
 
 
