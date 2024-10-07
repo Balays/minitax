@@ -3,15 +3,16 @@ Versatile Taxonomic Assignment Tool for Metagenomic Reads Using Minimap2
 
 Minitax is a taxonomic assignment tool designed for robust profiling across diverse sequencing platforms, including Oxford Nanopore (ONT), PacBio, and Illumina, as well as different library types like metagenomic whole genome sequencing (mWGS) and 16S rRNA gene sequencing. It utilizes minimap2 for initial alignment, followed by sophisticated post-alignment processing to ensure accurate taxonomic assignments.
 
-## How Minitax Works
+## How minitax Works
+### alignment with minimap2 
 Minitax begins by aligning reads using minimap2 with platform-specific parameter settings, ensuring the best performance for each sequencing platform.  
-
-### The default parameters settings are as follows:
+The default parameters settings are as follows:
+```
 Platform	Match Score	Mismatch Score	Insertion Score	Deletion Score	Gap Opening Penalty	Gap Extension Penalty	Description
 Illumina	2	-4	-3	-3	-4	-2	*Optimized for high-accuracy, short reads. Higher penalties for mismatches and indels to reflect the platform’s low error rate.*
 ONT	1	-3	-2	-2	-2	-1	*Adjusted for longer reads with higher error rates. More lenient penalties to accommodate frequent indels and mismatches.*
 PacBio	2	-3	-3	-3	-3	-2	*Balanced settings for long, high-fidelity reads (e.g., HiFi mode). Moderate penalties for indels to support accurate alignment in repetitive regions.*
-
+```
 ### Databases
 Minitax supports a variety of databases, including a comprehensive genome collection from NCBI (approximately 16,000 genomes) for WGS reads,  
 and EMUdb  (https://gitlab.com/treangenlab/emu) or SILVA (https://www.arb-silva.de/) for 16S gene sequencing data.  
