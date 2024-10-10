@@ -1,5 +1,13 @@
-# minitax
-Versatile Taxonomic Assignment Tool for Metagenomic Reads Using Minimap2
+"\n
+╔═════════════════════════════════╗
+║                                 ║
+║  ┌┬┐  ┬  ┐ ┌  ┬  ─┬─  ┌─┐  ╲╱   ║
+║  │││  │  │┝│  │   │   │ │  ||   ║
+║  ┴ ┴  ┴  ┘ └  ┴   ┴   ┴ ┴  ╱╲   ║
+║                                 ║
+╚═════════════════════════════════╝
+"
+Versatile Taxonomic Assignment Tool for Metagenomic Reads Using minimap2
 
 Minitax is a taxonomic assignment tool designed for robust profiling across diverse sequencing platforms, including Oxford Nanopore (ONT), PacBio, and Illumina, as well as different library types like metagenomic whole genome sequencing (mWGS) and 16S rRNA gene sequencing. It utilizes minimap2 for initial alignment, followed by sophisticated post-alignment processing to ensure accurate taxonomic assignments.
 
