@@ -1,4 +1,4 @@
-tax_glom_fast2 <- function(ps, rank=NULL, rank_level=NULL, ignore_lineage=T) {
+tax_glom_fast2 <- function(ps, rank=NULL, rank_level=NULL, ignore_lineage=F) {
 
   require(data.table)
 
@@ -33,20 +33,17 @@ tax_glom_fast2 <- function(ps, rank=NULL, rank_level=NULL, ignore_lineage=T) {
 
   colnames(otutab)[-1]   <- samp_names
 
-  psdata   <- merge(taxtab, otutab, by='rownames', all=T)
-  stopifnot(all(!is.na(psdata$rownames)))
-
   ## Lineage, considering all ranks from the top to the supplied rank (level)
   ranks    <- ranks[1:rank_level]
 
   if (ignore_lineage) {
 
     # Lineage is the supplied rank
-    psdata[, lineage := get(rank)]
+    taxtab[, lineage := get(rank)]
     # Check
-    stopifnot(nrow(psdata[get(rank) != lineage]) == 0)
+    stopifnot(nrow(taxtab[get(rank) != lineage]) == 0)
     # NA, where the lineage is the supplied rank only
-    psdata[is.na(lineage), lineage := 'NA-lineage']
+    taxtab[is.na(lineage), lineage := 'NA-lineage']
 
     ranks <- rank
 
@@ -54,14 +51,18 @@ tax_glom_fast2 <- function(ps, rank=NULL, rank_level=NULL, ignore_lineage=T) {
 
     # Create the lineage column by pasting the specified columns using lapply
     #psdata[is.na(get(rank)),  domain := NA]
-    psdata[, lineage := apply(.SD, 1, function(row) paste(na.omit(row), collapse = ";")), .SDcols = ranks]
+    taxtab[, lineage := apply(.SD, 1, function(row) paste(na.omit(row), collapse = ";")), .SDcols = ranks]
 
     # unknown lineage, where the rank above
-    psdata[is.na(get(rank)),  lineage := paste('unknown', lineage, rank, sep = '_')]
+    taxtab[is.na(get(rank)),  lineage := paste('unknown', lineage, rank, sep = '_')]
 
   }
-
-  #
+  
+  
+  # merge with counts
+  psdata   <- merge(taxtab, otutab, by='rownames', all=T)
+  stopifnot(all(!is.na(psdata$rownames)))
+  
 
   # melt for summary
   cols_to_group_by <- c('lineage', ranks)
