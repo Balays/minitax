@@ -1,0 +1,2 @@
+# Ignore database fasta files
+NCBI_genome_collection/database/.fasta
