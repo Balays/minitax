@@ -2,7 +2,7 @@
 
 ## get colors for given ps object
 
-colors_for_PS <- function(ps, rank, pal.man, unassigned='unassigned', unknowns='unknown_') {
+colors_for_PS <- function(ps, rank, pal.man, unassigned='missing', unknowns='unknown_') {
 
   if(rank != 'taxa_names') {
     colors   <- setdiff(as.character(ps@tax_table[, rank]), unassigned)
