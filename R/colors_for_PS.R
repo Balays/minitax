@@ -1,8 +1,4 @@
-
-
-## get colors for given ps object
-
-colors_for_PS <- function(ps, rank, pal.man, unassigned='missing', unknowns='unknown_') {
+colors_for_PS <- function(ps=ps.glom.norm.top.merged, rank='genus', pal.man, unassigned='missing', unknowns='unknown_') {
 
   if(rank != 'taxa_names') {
     colors   <- setdiff(as.character(ps@tax_table[, rank]), unassigned)
@@ -14,7 +10,8 @@ colors_for_PS <- function(ps, rank, pal.man, unassigned='missing', unknowns='unk
   unknown_cols <- as.character(grey.colors(length(unknown_cols)))
   names(unknown_cols) <- grep(unknowns, colors, value = T)
 
-  unknown_cols <- c(unknown_cols, unassigned = 'black')
+  unknown_cols <- c(unassigned = 'black', unknown_cols)
+  names(unknown_cols)[1] <- unassigned
 
   colors <- grep(unassigned, colors, value = T, invert = T)
 
@@ -27,6 +24,3 @@ colors_for_PS <- function(ps, rank, pal.man, unassigned='missing', unknowns='unk
   my.pal <- c(my.pal, unknown_cols)
 
 }
-
-
-#my.pal <- cols_for_ps(ps=ps.glom.norm.top.merged, rank=t, pal.man)
