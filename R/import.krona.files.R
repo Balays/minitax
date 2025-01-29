@@ -46,13 +46,15 @@ import.krona.files <- function(
                                              fifelse(grepl('o__', taxon), 'order',
                                                      fifelse(grepl('f__', taxon), 'family',
                                                              fifelse(grepl('g__', taxon), 'genus',
-                                                                     fifelse(grepl('s__', taxon), 'species', 'NA')))))))]
+                                                                     fifelse(grepl('s__', taxon), 'species',
+                                                                             fifelse(grepl('unclassified', taxon, ignore.case = T), 'superkingdom', 'NA'))))))))]
 
     melted[, taxon := gsub('.__', '', taxon) ]
 
     spreaded <- dcast(melted, lineage + count ~ rank, value.var = 'taxon')
     #spreaded <- spread(melted, 'lineage', 'rank')
 
+    spreaded[grepl('unclassified', superkingdom, ignore.case = T), species := 'Unclassified']
     spreaded <- spreaded[!is.na(species), ]
 
     krona <- data.frame(spreaded, row.names = spreaded$lineage)
