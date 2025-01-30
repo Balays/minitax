@@ -62,19 +62,20 @@ ov.from.bam3 <- function (bamfile,
   bam <- aln
   
   ## put back unmapped reads
-  bam <- plyr::rbind.fill(bam, bam.na)
+  bam <- rbind(bam, bam.na, use.names=T, fill=T)
+  setDT(bam)
   ##
   
   ##
   if (is.lortia) {
-    bam <- bam[, c(what, "start", "end"
-                   , paste0("tag.", lortia.tags), "tags")]
+    cnames <- c(what, "start", "end", paste0("tag.", lortia.tags), "tags")
+    bam <- bam[, ..cnames]
   } else {
-    bam <- bam[, c(what, "start", "end")]
+    cnames <- c(what, "start", "end")
+    bam <- bam[, ..cnames]
   }
   colnames(bam)[1] <- "seqnames"
   
-  setDT(bam)
   
   ## add 3' and 5' end positions
   if (add.primes) {
