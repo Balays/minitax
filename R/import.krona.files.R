@@ -28,17 +28,13 @@ import.krona.files <- function(
                                  sample=sample,
                                  row.names=sample)
 
-    #readcounts <- read.delim('readcount_portik.txt')
-
-
     data <- fread(krona.files[i], fill=TRUE, na.strings = '')
-    colnames(data) <- c('count', ranks)
+    colnames(data)[1] <- c('count')
 
-    krona <- unite(as.data.frame(data), 'lineage', ranks, sep=';', remove = F, na.rm = T)
-    rownames(krona) <- krona$lineage
+    krona <- unite(as.data.frame(data), 'lineage', -1, sep=';', remove = F, na.rm = T)
     setDT(krona)
 
-    melted <- melt(krona, id.vars=c('lineage', 'count'), value.name = 'taxon', variable.name = 'rank')
+    melted <- melt.data.table(krona, id.vars=c('lineage', 'count'), value.name = 'taxon', variable.name = 'rank')
     melted <- melted[!is.na(taxon)]
     melted[, rank := fifelse(grepl('k__', taxon), 'superkingdom',
                              fifelse(grepl('p__', taxon), 'phylum',
@@ -51,15 +47,15 @@ import.krona.files <- function(
 
     melted[, taxon := gsub('.__', '', taxon) ]
 
-    spreaded <- dcast(melted, lineage + count ~ rank, value.var = 'taxon')
-    #spreaded <- spread(melted, 'lineage', 'rank')
+
+    spreaded <- dcast.data.table(melted, lineage + count ~ rank, value.var = 'taxon')
 
     spreaded[grepl('unclassified', superkingdom, ignore.case = T), species := 'Unclassified']
     spreaded <- spreaded[!is.na(species), ]
 
     krona <- data.frame(spreaded, row.names = spreaded$lineage)
-    ## OK!
 
+    ranks <- unique(melted[,rank])
 
     taxtab <- krona[,ranks]
     otutab <- as.data.frame(krona[,'count']); rownames(otutab) <- rownames(taxtab)
