@@ -1,4 +1,6 @@
-tax_glom_fast2 <- function(ps, rank=NULL, rank_level=NULL, ignore_lineage=F) {
+tax_glom_fast2 <- function(ps,
+                           rank=NULL, rank_level=NULL,
+                           ignore_lineage=T, ignore_lineage_below_rank=T) {
 
   require(data.table)
 
@@ -33,36 +35,63 @@ tax_glom_fast2 <- function(ps, rank=NULL, rank_level=NULL, ignore_lineage=F) {
 
   colnames(otutab)[-1]   <- samp_names
 
-  ## Lineage, considering all ranks from the top to the supplied rank (level)
-  ranks    <- ranks[1:rank_level]
+  psdata   <- merge(taxtab, otutab, by='rownames', all=T)
+  stopifnot(all(!is.na(psdata$rownames)))
+
+
+
+  ## Consider lineages?
 
   if (ignore_lineage) {
 
-    # Lineage is the supplied rank
-    taxtab[, lineage := get(rank)]
-    # Check
-    stopifnot(nrow(taxtab[get(rank) != lineage]) == 0)
-    # NA, where the lineage is the supplied rank only
-    taxtab[is.na(lineage), lineage := 'NA-lineage']
+    # Keep only the given rank
+    ranks    <- rank
 
-    ranks <- rank
+    message('Ignoring lineages when glomerating.')
+
+    # Lineage is the supplied rank
+    psdata[, lineage := get(rank)]
+    # Check
+    stopifnot(nrow(psdata[get(rank) != lineage]) == 0)
+    # NA, where the lineage is the supplied rank only
+    psdata[is.na(lineage), lineage := 'NA-lineage']
+
 
   } else {
 
     # Create the lineage column by pasting the specified columns using lapply
-    #psdata[is.na(get(rank)),  domain := NA]
-    taxtab[, lineage := apply(.SD, 1, function(row) paste(na.omit(row), collapse = ";")), .SDcols = ranks]
+    if(ignore_lineage_below_rank) {
+
+      # Subset ranks to those below given rank
+      ranks    <- ranks[1:rank_level]
+
+      message('Considering lineages, but ignoring rank levels below "', rank, '" when glomerating.')
+
+      #psdata[is.na(get(rank)),  domain := NA]
+      psdata[, lineage := apply(.SD, 1, function(row) paste(na.omit(row), collapse = ";"))
+             ,.SDcols = ranks
+      ]
+
+    } else {
+
+      # Keep all ranks
+      ranks    <- ranks #[1:rank_level]
+
+      message('Considering lineages on all rank levels when glomerating.')
+
+      #psdata[is.na(get(rank)),  domain := NA]
+      psdata[, lineage := apply(.SD, 1, function(row) paste(na.omit(row), collapse = ";"))
+             ,.SDcols = ranks
+      ]
+
+    }
 
     # unknown lineage, where the rank above
-    taxtab[is.na(get(rank)),  lineage := paste('unknown', lineage, rank, sep = '_')]
+    psdata[is.na(get(rank)),  lineage := paste('unknown', lineage, rank, sep = '_')]
 
   }
-  
-  
-  # merge with counts
-  psdata   <- merge(taxtab, otutab, by='rownames', all=T)
-  stopifnot(all(!is.na(psdata$rownames)))
-  
+
+  #
 
   # melt for summary
   cols_to_group_by <- c('lineage', ranks)

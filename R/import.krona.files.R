@@ -51,7 +51,8 @@ import.krona.files <- function(
     spreaded <- dcast.data.table(melted, lineage + count ~ rank, value.var = 'taxon')
 
     spreaded[grepl('unclassified', superkingdom, ignore.case = T), species := 'Unclassified']
-    spreaded <- spreaded[!is.na(species), ]
+
+    #spreaded <- spreaded[!is.na(species), ]
 
     krona <- data.frame(spreaded, row.names = spreaded$lineage)
 
