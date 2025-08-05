@@ -31,18 +31,55 @@ df.from.ps <- function(ps,
 
 ## normalize counts
 norm.ps <- function(ps, norm=NA, pseudocount=0) {
-  otutab <- otu_table(ps) + pseudocount
-  ps <- phyloseq(otutab, tax_table(ps), sample_data(ps))
+  
   if (is.na(norm)) {
-    ps.prop  <- ps
-  } else if (norm == 'sum') {
-    ps.prop <- transform_sample_counts(ps, function(otu) otu/sum(otu))
-  } else if (norm == 'rlog') {
-    ps.prop  <- ps
+    ps.prop  <- ps; return(ps.prop)
+  }
+  
+  taxtab   <- data.frame(tax_table(ps))
+  otutab   <- data.frame(otu_table(ps))
+  
+  otutab   <- otutab + pseudocount
+  
+  if (norm == 'sum') {
+    otutab <- scale(otutab, colSums(otutab), center=F)
+  }
+  
+  ps <- NULL 
+  try({
+    ps <- phyloseq(tax_table(as.matrix(taxtab)),
+                   otu_table(as.matrix(otutab), taxa_are_rows = T),
+                   sample_data(sampdat))
+  })
+  
+  
+  ## Safeguard for problematic taxa names
+  if(is.null(ps)) {
+    
+    taxnames <- rownames(taxtab)
+    
+    rownames(taxtab) <- NULL
+    rownames(otutab) <- NULL
+    
+    ps <- phyloseq(tax_table(as.matrix(taxtab)),
+                        otu_table(as.matrix(otutab), taxa_are_rows = T),
+                        sample_data(sampdat))
+    
+    taxtab   <- data.frame(tax_table(ps))
+    otutab   <- data.frame(otu_table(ps))
+    
+    taxa_names(ps) <- taxnames
+    
+  }
+  
+  if (norm == 'rlog') {
     de.seq   <- phyloseq_to_deseq2(ps, ~sample)
     rlog.asv <- assay(rlog(de.seq))
     otu_table(ps.prop) <- otu_table(rlog.asv, taxa_are_rows = T)
-  } else  {stop('incorrect "norm"!')}
+  } else {
+    ps.prop  <- ps
+    
+  }
 
   return(ps.prop)
 }
