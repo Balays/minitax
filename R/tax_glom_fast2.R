@@ -113,9 +113,31 @@ tax_glom_fast2 <- function(ps,
 
   colnames(otutab)[]   <- samp_names
 
-  ps.glom <- phyloseq(tax_table(as.matrix(taxtab)),
-                      otu_table(as.matrix(otutab), taxa_are_rows = T),
-                      sample_data(sampdat))
+  ps.glom <- NULL
+
+  try({
+    ps.glom <- phyloseq(tax_table(as.matrix(taxtab)),
+                        otu_table(as.matrix(otutab), taxa_are_rows = T),
+                        sample_data(sampdat))
+  })
+
+
+  ## Safeguard for problematic taxa names
+  if(is.null(ps.glom)) {
+
+    rownames(taxtab) <- NULL
+    rownames(otutab) <- NULL
+
+    ps.glom <- phyloseq(tax_table(as.matrix(taxtab)),
+                        otu_table(as.matrix(otutab), taxa_are_rows = T),
+                        sample_data(sampdat))
+
+    taxtab   <- data.frame(tax_table(ps.glom))
+    otutab   <- data.frame(otu_table(ps.glom))
+
+    taxa_names(ps.glom) <- taxtab[,rank]
+
+  }
 
   return(ps.glom)
 }
