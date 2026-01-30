@@ -95,6 +95,7 @@ tax_glom_fast2 <- function(ps,
 
   # melt for summary
   cols_to_group_by <- c('lineage', ranks)
+  samples <- intersect(samples, colnames(psdata))
   psdata.m <- melt.data.table(psdata, id.vars = cols_to_group_by, measure.vars = samples, variable.name = 'sample', value.name = 'count')
 
   # summarse on given level
