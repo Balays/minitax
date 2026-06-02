@@ -8,13 +8,20 @@ fi
 
 # If provided, use the first argument as the config file path
 CONFIG_FILE="$1"
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "Configuration file not found: $CONFIG_FILE"
+    exit 1
+fi
 
 
 # Load the configuration file into an associative array in bash
 declare -A config
 while IFS=$'\t' read -r argument value step description; do
+    if [ "$argument" = "argument" ] || [ -z "$argument" ]; then
+        continue
+    fi
     config[$argument]=$value
-done < $CONFIG_FILE
+done < "$CONFIG_FILE"
 
 ## Parameters
 Nsec="${config[Nsec]}"
@@ -27,12 +34,15 @@ index="${config[db.dir]}/${config[mm2_index]}"
 
 
 # Create the output directory based on config values
-outdir=minitax_"${config[project]}_${config[platform]}_${config[Vregion]}_${config[db]}"
-if [ "${config[outdir]}" == "NA" ]; then
-    mkdir -p "${outdir}"
+default_outdir=minitax_"${config[project]}_${config[platform]}_${config[Vregion]}_${config[db]}"
+if [ -z "${config[outdir]}" ] || [ "${config[outdir]}" == "NA" ]; then
+    outdir="$default_outdir"
+else
+    outdir="${config[outdir]}"
 fi
+mkdir -p "${outdir}"
 bamoutdir="${outdir}"/bam
-mkdir "$bamoutdir"
+mkdir -p "$bamoutdir"
 
 ## Input directory
 indir="${config[indir]}" #
@@ -46,27 +56,27 @@ ls -a "$indir"/*"$suffix"
 if [ "${config[platform]}" == "Illumina" ]; then
 	# Determine if the reads are paired or merged
 	if [ "${config[reads]}" == "paired" ]; then
-		
+
 		suffix="${config[fastq_suffix]}"
 		pattern="${config[fastq_pair_pattern]}"
-		if [ $pattern == "NA" ]; then
+		if [ "$pattern" == "NA" ]; then
 			echo pattern will not be used
 			pattern=""
 		fi
-		
+
 		if [ "${config[debug]}" == "TRUE" ]; then
 			# List all the unique base names of the samples
 			echo "This was the file pattern: " "$pattern"
 			echo "Constructed grep pattern: ${pattern}_R[1-2]${suffix}"
 			echo "Files matching pattern:"
 			ls "$indir" | grep -E "${pattern}_R[1-2]${suffix}"
-			
+
 			echo "Base names after sed operation:"
 			ls "$indir" | grep -E "${pattern}_R[1-2]${suffix}" | sed "s|${pattern}_R[1-2]${suffix}||"
 			echo "Unique base names:"
 			ls "$indir" | grep -E "${pattern}_R[1-2]${suffix}" | sed "s|${pattern}_R[1-2]${suffix}||" | uniq
 		fi
-	
+
 		echo 'starting minimap2 using ' "$NPROC" 'cores...'
 		#for filepath in "$indir"/"${pattern}_R"[1-2]"$suffix"; do
 			#base=$(basename "$filepath" "_R"[1-2]"$suffix")
@@ -75,38 +85,38 @@ if [ "${config[platform]}" == "Illumina" ]; then
 		for base in $(ls $indir | grep -E "${pattern}_R[1-2]${suffix}" | sed "s|${pattern}_R[1-2]${suffix}||" | uniq);do
 			R1="${base}${pattern}_R1${suffix}"
 			R2="${base}${pattern}_R2${suffix}"
-			
+
 			if [ "${config[debug]}" == "TRUE" ]; then
 				echo "Constructed R1 path: ${indir}/${R1}"
 				echo "Constructed R2 path: ${indir}/${R2}"
 			fi
-			
+
 			echo 'started mapping ' "$R1" 'and ' "$R2" ' to ' "$index" ' at:'
 			date
-			$mm2 -ax sr -t "$NPROC" -Y -C5 --split-prefix -un -N $Nsec ${index} ${indir}/${R1} ${indir}/${R2} \
-			| samtools view -b -@ ${NPROC} - \
-			| samtools sort - -o ${bamoutdir}/${base}.bam -@ ${NPROC}
-			samtools index -@ ${NPROC} ${bamoutdir}/${base}.bam
+			"$mm2" -ax sr -t "$NPROC" -Y -C5 --split-prefix -un -N "$Nsec" "$index" "${indir}/${R1}" "${indir}/${R2}" \
+			| samtools view -b -@ "${NPROC}" - \
+			| samtools sort - -o "${bamoutdir}/${base}.bam" -@ "${NPROC}"
+			samtools index -@ "${NPROC}" "${bamoutdir}/${base}.bam"
 			echo 'mapping done, on:'
 			date
-			
+
 		done
 	elif [ "${config[reads]}" == "merged" ]; then
 		suffix="${config[fastq_suffix]}"
-		
+
 		echo 'starting minimap2 step for merged reads...'
 		for mergedRead in $(ls $indir/*${suffix});do
-			base=$(basename $mergedRead $suffix)
-			
+			base=$(basename "$mergedRead" "$suffix")
+
 			if [ "${config[debug]}" == "TRUE" ]; then
 				echo "Constructed merged read path: ${mergedRead}"
 			fi
 			echo 'started mapping ' "$mergedRead" ' to ' "$index" ' at:'
 			date
-			$mm2 -ax sr -t "$NPROC" -Y -C5 --split-prefix -un -N $Nsec ${index} ${mergedRead} \
-			| samtools view -b -@ ${NPROC} - \
-			| samtools sort - -o ${bamoutdir}/${base}.bam -@ ${NPROC}
-			samtools index -@ ${NPROC} ${bamoutdir}/${base}.bam
+			"$mm2" -ax sr -t "$NPROC" -Y -C5 --split-prefix -un -N "$Nsec" "$index" "$mergedRead" \
+			| samtools view -b -@ "${NPROC}" - \
+			| samtools sort - -o "${bamoutdir}/${base}.bam" -@ "${NPROC}"
+			samtools index -@ "${NPROC}" "${bamoutdir}/${base}.bam"
 			echo 'mapping done, on:'
 			date
 		done
@@ -120,13 +130,13 @@ if [ "${config[platform]}" == "ONT" ]; then
 	suffix="${config[fastq_suffix]}"
 	echo 'started mapping with ONT settings...'
 	for fastq in $(ls $indir/*$suffix); do
-		base=$(basename $indir/$fastq $suffix)
+		base=$(basename "$fastq" "$suffix")
 		echo 'started mapping ' "$base" ' to ' "$index" ' at:'
 		date
-		$mm2 -ax map-ont -t "$NPROC" -Y -C5 --split-prefix -un -N $Nsec ${index} ${fastq} \
-		| samtools view -b -@ ${NPROC} - \
-		| samtools sort - -o ${bamoutdir}/${base}.bam -@ ${NPROC}
-		samtools index -@ ${NPROC} ${bamoutdir}/${base}.bam 
+		"$mm2" -ax map-ont -t "$NPROC" -Y -C5 --split-prefix -un -N "$Nsec" "$index" "$fastq" \
+		| samtools view -b -@ "${NPROC}" - \
+		| samtools sort - -o "${bamoutdir}/${base}.bam" -@ "${NPROC}"
+		samtools index -@ "${NPROC}" "${bamoutdir}/${base}.bam"
 		echo 'mapping done, on:'
 		date
 done
@@ -137,13 +147,13 @@ if [ "${config[platform]}" == "PacBio" ]; then
 	suffix="${config[fastq_suffix]}"
 	echo 'started mapping with PacBio settings...'
 	for fastq in $(ls $indir/*$suffix); do
-		base=$(basename $indir/$fastq $suffix)
+		base=$(basename "$fastq" "$suffix")
 		echo 'started mapping ' "$base" ' to ' "$index" ' at:'
 		date
-		$mm2 -ax map-pb -t "$NPROC" -Y -C5 --split-prefix -un -N $Nsec ${index} ${fastq} \
-		| samtools view -b -@ ${NPROC} - \
-		| samtools sort - -o ${bamoutdir}/${base}.bam -@ ${NPROC}
-		samtools index -@ ${NPROC} ${bamoutdir}/${base}.bam 
+		"$mm2" -ax map-pb -t "$NPROC" -Y -C5 --split-prefix -un -N "$Nsec" "$index" "$fastq" \
+		| samtools view -b -@ "${NPROC}" - \
+		| samtools sort - -o "${bamoutdir}/${base}.bam" -@ "${NPROC}"
+		samtools index -@ "${NPROC}" "${bamoutdir}/${base}.bam"
 		echo 'mapping done, on:'
 		date
 done

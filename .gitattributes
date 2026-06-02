@@ -1,0 +1,23 @@
+# Keep source files stable across Windows, WSL, Linux, and macOS clones.
+* text=auto
+
+# Executable and scripting files must stay LF for WSL/Linux tools.
+*.sh text eol=lf
+*.bash text eol=lf
+*.R text eol=lf
+*.Rmd text eol=lf
+
+# Data/config text files used by shell/R pipelines should also stay LF.
+*.txt text eol=lf
+*.tsv text eol=lf
+*.csv text eol=lf
+*.md text eol=lf
+
+# Binary artifacts must never be line-ending normalized.
+*.bam binary
+*.bai binary
+*.rds binary
+*.RData binary
+*.gz binary
+*.zip binary
+*.idx binary

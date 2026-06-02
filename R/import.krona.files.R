@@ -80,6 +80,12 @@ import.krona.files <- function(
     ## Keep only 'ranks'
     melted   <- melted[rank %in% ranks, ]
 
+    melted[, rank := factor(rank, levels = ranks)]
+
+    melted   <- melted[order(lineage, rank)]
+
+    #melted[, lineage := paste0( sep=';')]
+
     spreaded <- dcast.data.table(melted, lineage + count ~ rank, value.var = 'taxon')
 
     spreaded[grepl('unclassified', ranks[1], ignore.case = T), species := 'Unclassified']
@@ -87,13 +93,34 @@ import.krona.files <- function(
     # Filtering
     #spreaded <- spreaded[!is.na(species), ]
 
-    if(omit.unclassified) {
+    if(exists('omit.unclassified') && omit.unclassified) {
       spreaded <- spreaded[!grepl('unclassified', lineage, ignore.case = T), ]
     }
 
-    krona <- data.frame(spreaded, row.names = spreaded$lineage)
 
+    melted[, rank := as.character(rank)]
     ranks <- unique(melted[,rank])
+    cols  <- c('lineage', 'count', as.character(ranks))
+
+    krona <- unique(spreaded[,..cols])
+
+    krona <- setDT(unite(data.frame(krona), col = 'lineage', all_of(ranks), sep=';', remove = F, na.rm = T))
+
+    krona <- unique(krona[,..cols])
+
+    if(length(dup(krona$lineage)) > 0) {
+      message('There are ', length(dup(krona$lineage)), ' taxa, where there is a difference in the lineages, other than specified in the "ranks" argument.\n
+              These are needed to be collapsed, so it was carried out.')
+
+      cols  <- c('lineage', as.character(ranks))
+
+      counts <- krona[, .(count = sum(count)), by=cols ]
+
+      krona  <- counts
+    }
+
+    krona <- data.frame(krona, row.names = krona$lineage)
+
 
     taxtab <- krona[,ranks]
     otutab <- as.data.frame(krona[,'count']); rownames(otutab) <- rownames(taxtab)
