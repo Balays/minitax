@@ -28,7 +28,7 @@ message(
 #### Load packages quietely #####
 
 suppressMessages(suppressWarnings(library(Rsamtools)))
-#suppressMessages(suppressWarnings(library(readr)))
+suppressMessages(suppressWarnings(library(readr)))
 suppressMessages(suppressWarnings(library(ggplot2)))
 suppressMessages(suppressWarnings(library(tidyr)))
 suppressMessages(suppressWarnings(library(dplyr)))
