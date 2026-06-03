@@ -115,14 +115,25 @@ You can validate only one step when needed:
 ./minitax_validate.sh minitax_config.txt --step database
 ```
 
-Mappping part
+Mapping part:
 ```
-minitax/minitax.sh minitax_config_allNCBI.txt
+./minitax.sh minitax_config.txt
 ```
 
-Finding the best taxonomic assignement for each read
+The mapper validates the config first, writes BAM files to `outdir/bam`, and
+writes per-sample logs to `outdir/logs`. Useful options:
 ```
-minitax/minitax.complete.R minitax_config_NCBI.txt
+./minitax.sh minitax_config.txt --dry-run
+./minitax.sh minitax_config.txt --force
+./minitax.sh minitax_config.txt --no-validate
+```
+
+If `mm2_index` is missing and `mm2_ref` points to a FASTA, the mapper will build
+the minimap2 index before mapping.
+
+Finding the best taxonomic assignment for each read:
+```
+./minitax.complete.R minitax_config.txt
 ```
 
 ## Outputs

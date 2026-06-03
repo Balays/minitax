@@ -132,7 +132,10 @@ get_cfg <- function(name, default = NA_character_) {
 }
 
 require_keys <- function(keys) {
-  missing <- keys[!keys %in% names(cfg) | vapply(keys, function(k) is_config_na(cfg[[k]]), logical(1))]
+  missing_by_name <- keys[!keys %in% names(cfg)]
+  present <- intersect(keys, names(cfg))
+  missing_by_value <- present[vapply(present, function(k) is_config_na(cfg[[k]]), logical(1))]
+  missing <- unique(c(missing_by_name, missing_by_value))
   if (length(missing) > 0) {
     err("Missing required config argument(s): " %+% paste(missing, collapse = ", "))
   } else {
@@ -431,7 +434,23 @@ check_database <- function() {
 
   index <- get_cfg("mm2_index")
   if (!is_config_na(index)) {
-    file_readable(file.path(db_dir, index), "minimap2 index", required = step %in% c("all", "map"))
+    index_path <- file.path(db_dir, index)
+    index_required <- step %in% c("all", "map")
+    if (file.exists(index_path)) {
+      file_readable(index_path, "minimap2 index", required = index_required)
+    } else {
+      mm2_ref <- normalize_config_path(get_cfg("mm2_ref"))
+      ref_candidates <- character()
+      if (!is_config_na(mm2_ref)) {
+        ref_candidates <- unique(c(mm2_ref, file.path(db_dir, mm2_ref)))
+      }
+      ref_found <- ref_candidates[file.exists(ref_candidates)]
+      if (index_required && length(ref_found) > 0) {
+        warn("minimap2 index not found, but mm2_ref exists; minitax.sh can build the index: " %+% ref_found[[1]])
+      } else {
+        file_readable(index_path, "minimap2 index", required = index_required)
+      }
+    }
   } else if (step %in% c("all", "map")) {
     err("mm2_index is required for mapping.")
   }
