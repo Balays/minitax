@@ -59,6 +59,33 @@ package `data.table`. `pigz` is optional but speeds up compression. For example:
 mamba activate minitax
 ```
 
+### Reliable MAPQ with large minimap2 indexes
+
+For large genome collections, minimap2 can split the reference into multiple
+index parts. Mapping still works, but minimap2's MAPQ is not reliable across
+multi-part indexes because each part is scored independently. Minitax uses MAPQ
+when selecting best alignments, so large database indexes must be built with an
+`-I` value larger than the reference collection.
+
+The bundled builders default to `-I 128G`:
+```
+scripts/build_minimap2_index.sh \
+  --db-dir /mnt/d/data/databases/minitax_bacteria_refseq \
+  --threads 8 \
+  --index-batch-size 128G \
+  --force
+
+scripts/build_minimap2_index.sh \
+  --db-dir /mnt/d/data/databases/all_NCBI_genomes \
+  --threads 8 \
+  --index-batch-size 128G \
+  --force
+```
+
+The index builder writes to `all_NCBI_genomes.idx.tmp` first and only replaces
+the final index after a successful build. It rejects builds whose minimap2 log
+shows more than one `loaded/built the index` block.
+
 Check the selected assemblies without downloading genomes:
 ```
 ./build_NCBI_genome_collection.sh \
@@ -81,7 +108,8 @@ Build the default RefSeq representative/reference collection:
 ```
 ./build_NCBI_genome_collection.sh \
   --outdir /mnt/d/data/databases/all_NCBI_genomes \
-  --threads 32
+  --threads 32 \
+  --index-batch-size 128G
 ```
 
 The output directory will contain:
@@ -100,7 +128,47 @@ Then set these config values:
 db	all_NCBI_genomes
 db.dir	/mnt/d/data/databases/all_NCBI_genomes
 mm2_index	all_NCBI_genomes.idx
+mm2_ref	all_NCBI_genomes.fna.gz
+mapper_backend	auto
+mm2_index_batch	128G
 ```
+
+## Mapper backend: mm2-fast or Parabricks
+
+By default, `mapper_backend=auto` tries NVIDIA Parabricks minimap2 only when the
+local CUDA/Docker/Parabricks test passes. Otherwise it uses `mm2_path`, usually
+`mm2-fast` or vanilla `minimap2`.
+
+Relevant config keys:
+```
+mm2_path	/home/kakuk/anaconda3/envs/minitax/bin/mm2-fast
+mapper_backend	auto
+parabricks_image	nvcr.io/nvidia/clara/clara-parabricks:4.7.0-1
+parabricks_num_gpus	1
+parabricks_extra_flags	NA
+```
+
+Test a system before running a GPU mapping job:
+```
+scripts/test_CUDA.sh --pull --self-test
+```
+
+The detector prints either:
+```
+recommended_mapper=parabricks
+```
+or:
+```
+recommended_mapper=mm2-fast
+```
+
+Parabricks minimap2 requires Docker with NVIDIA GPU support, a local or pullable
+Parabricks image, and `mm2_ref` pointing to the reference FASTA inside `db.dir`.
+The current automatic backend uses Parabricks for supported long-read presets
+such as `map-ont`; Illumina short-read mapping stays on `mm2_path`.
+
+NVIDIA Parabricks minimap2 reference:
+https://docs.nvidia.com/clara/parabricks/latest/documentation/tooldocs/man_minimap2.html
 
 ## Running minitax
 Validate the config before launching a run:
@@ -129,7 +197,39 @@ writes per-sample logs to `outdir/logs`. Useful options:
 ```
 
 If `mm2_index` is missing and `mm2_ref` points to a FASTA, the mapper will build
-the minimap2 index before mapping.
+the minimap2 index before mapping, using `mm2_index_batch` as minimap2's `-I`
+value.
+
+## Prebuilt database bundles
+
+Do not commit database binaries to git. Publish full runnable bundles containing
+the FASTA, minimap2 index, taxonomy tables, sequence lengths, manifests, and
+checksums.
+
+Create split archive parts:
+```
+scripts/package_minitax_db.sh \
+  --db-dir /mnt/d/data/databases/minitax_bacteria_refseq \
+  --name minitax_bacteria_refseq_YYYYMMDD.minimap2-I128G \
+  --outdir /mnt/d/data/databases/minitax_bacteria_refseq/bundles \
+  --part-size 45G
+```
+
+Recommended hosting:
+- Zenodo: DOI, metadata, README, checksums, and small files.
+- Hugging Face dataset: oversized archive parts when the full bundle exceeds
+  Zenodo's practical quota.
+
+Download and verify a published bundle:
+```
+scripts/download_minitax_db_bundle.sh \
+  --url-base https://huggingface.co/datasets/ORG/DATASET/resolve/main \
+  --bundle minitax_bacteria_refseq_YYYYMMDD.minimap2-I128G \
+  --outdir /mnt/d/data/databases/minitax_bacteria_refseq
+```
+
+Zenodo size-limit reference:
+https://support.zenodo.org/help/en-gb/1-upload-deposit/80-what-are-the-size-limitations-of-zenodo
 
 Finding the best taxonomic assignment for each read:
 ```

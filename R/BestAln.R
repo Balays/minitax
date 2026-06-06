@@ -18,8 +18,19 @@ assign_most_probable <- function(data, rank, thresholds, ranks) {
     cols <- c('sample', 'qname', 'tax.identity', 'tax.identity.level', 'tax.identity_rank_level',
               rank, paste0(rank, c('_count', '_prob', '_most_probable', '_most_probable_rank_level')),
               paste0('is_', rank, '_most_prob'))
-    empty <- data.table(matrix(nrow = 0, ncol = length(cols)))
-    setnames(empty, cols)
+    empty <- data.table(
+      sample = character(),
+      qname = character(),
+      tax.identity = character(),
+      tax.identity.level = character(),
+      tax.identity_rank_level = integer()
+    )
+    empty[, (rank) := character()]
+    empty[, (paste0(rank, '_count')) := integer()]
+    empty[, (paste0(rank, '_prob')) := numeric()]
+    empty[, (paste0(rank, '_most_probable')) := character()]
+    empty[, (paste0(rank, '_most_probable_rank_level')) := integer()]
+    empty[, (paste0('is_', rank, '_most_prob')) := logical()]
     return(empty)
   }
 

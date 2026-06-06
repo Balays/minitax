@@ -28,6 +28,9 @@ Options:
   --assembly-accessions FILE  Optional GCF_/GCA_ accession allow-list, one per line.
   --max-genomes N             Keep only the first N selected assemblies. Useful for testing.
   --threads N                 Threads for minimap2 indexing. Default: 4
+  --index-batch-size SIZE     minimap2 -I batch size. Default: 128G.
+                              Use a value larger than the reference size to avoid
+                              multi-part indexes with unreliable MAPQ.
   --rscript PATH              Rscript path. Default: command -v Rscript
   --minimap2 PATH             minimap2 path. Default: command -v minimap2
   --skip-index                Do not build the minimap2 index.
@@ -85,6 +88,7 @@ REFSEQ_CATEGORIES="reference genome,representative genome"
 ASSEMBLY_ACCESSIONS=""
 MAX_GENOMES=""
 THREADS=4
+INDEX_BATCH_SIZE="128G"
 RSCRIPT_BIN="${RSCRIPT:-}"
 MINIMAP2_BIN="${MINIMAP2:-}"
 SKIP_INDEX=0
@@ -101,6 +105,7 @@ while [[ $# -gt 0 ]]; do
     --assembly-accessions) ASSEMBLY_ACCESSIONS="${2:-}"; shift 2 ;;
     --max-genomes) MAX_GENOMES="${2:-}"; shift 2 ;;
     --threads) THREADS="${2:-}"; shift 2 ;;
+    --index-batch-size) INDEX_BATCH_SIZE="${2:-}"; shift 2 ;;
     --rscript) RSCRIPT_BIN="${2:-}"; shift 2 ;;
     --minimap2) MINIMAP2_BIN="${2:-}"; shift 2 ;;
     --skip-index) SKIP_INDEX=1; shift ;;
@@ -114,6 +119,7 @@ done
 [[ -n "$OUTDIR" ]] || { usage; fail "--outdir is required."; }
 [[ "$THREADS" =~ ^[0-9]+$ ]] || fail "--threads must be a positive integer."
 [[ "$THREADS" -gt 0 ]] || fail "--threads must be greater than 0."
+[[ "$INDEX_BATCH_SIZE" =~ ^[0-9]+[KkMmGgTt]?$ ]] || fail "--index-batch-size must look like 128G, 64000M, or 500000000."
 if [[ -n "$MAX_GENOMES" && ! "$MAX_GENOMES" =~ ^[0-9]+$ ]]; then
   fail "--max-genomes must be a positive integer."
 fi
@@ -129,6 +135,8 @@ fi
 
 if [[ "$SKIP_INDEX" -eq 0 && -z "$MINIMAP2_BIN" ]]; then
   MINIMAP2_BIN="$(command -v minimap2 || true)"
+elif [[ "$SKIP_INDEX" -eq 0 && "$MINIMAP2_BIN" != */* ]]; then
+  MINIMAP2_BIN="$(command -v "$MINIMAP2_BIN" || true)"
 fi
 if [[ "$SKIP_INDEX" -eq 0 ]]; then
   [[ -n "$MINIMAP2_BIN" && -x "$MINIMAP2_BIN" ]] || fail "minimap2 not found. Activate an environment or pass --minimap2 PATH."
@@ -149,6 +157,7 @@ echo "Sources: $SOURCES"
 echo "Tax groups: $TAX_GROUPS"
 echo "Assembly levels: $ASSEMBLY_LEVELS"
 echo "RefSeq categories: $REFSEQ_CATEGORIES"
+echo "Index batch size: $INDEX_BATCH_SIZE"
 
 tmp_levels="${OUTDIR}/metadata/.levels.txt"
 tmp_categories="${OUTDIR}/metadata/.categories.txt"
@@ -286,13 +295,6 @@ tar -xzf "$TAXDUMP" -C "${OUTDIR}/taxdump" names.dmp nodes.dmp
   --taxdump-dir "${OUTDIR}/taxdump" \
   --outdir "$OUTDIR"
 
-if [[ "$SKIP_INDEX" -eq 0 ]]; then
-  echo "Building minimap2 index..."
-  "$MINIMAP2_BIN" -t "$THREADS" -d "${OUTDIR}/all_NCBI_genomes.idx" "$FASTA_GZ"
-else
-  echo "Skipping minimap2 index."
-fi
-
 cat > "${OUTDIR}/build_manifest.tsv" <<EOF
 key	value
 sources	$SOURCES
@@ -303,7 +305,22 @@ selected_assemblies	$selected_count
 selected_genome_size_bp	$selected_bases
 fasta	$FASTA_GZ
 index	${OUTDIR}/all_NCBI_genomes.idx
+index_batch_size	$INDEX_BATCH_SIZE
 EOF
+
+if [[ "$SKIP_INDEX" -eq 0 ]]; then
+  echo "Building minimap2 index with -I ${INDEX_BATCH_SIZE}..."
+  "${SCRIPT_DIR}/build_minimap2_index.sh" \
+    --db-dir "$OUTDIR" \
+    --fasta "$FASTA_GZ" \
+    --index all_NCBI_genomes.idx \
+    --threads "$THREADS" \
+    --index-batch-size "$INDEX_BATCH_SIZE" \
+    --minimap2 "$MINIMAP2_BIN" \
+    --force
+else
+  echo "Skipping minimap2 index."
+fi
 
 echo "Done. Use this in minitax_config.txt:"
 echo "  db.dir	$OUTDIR"

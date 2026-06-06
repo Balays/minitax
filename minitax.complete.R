@@ -444,6 +444,7 @@ if (any(methods.to.use == 'BestAln')) {
 
   ###
   saveRDS(taxa.sum, paste0(outdir, '/', outdir, '_', methods, '_taxa.all.sum',  '.rds'))
+  fwrite(taxa.sum, paste0(outdir, '/', outdir, '_', methods, '_taxa.all.sum',  '.tsv'), sep = '\t', na = 'NA')
 
   message('output of ', methods, ': ')
   print(head(taxa.sum))
@@ -537,6 +538,7 @@ if (any(methods.to.use == 'RandAln')) {
 
   ###
   saveRDS(taxa.sum, paste0(outdir, '/', outdir, '_', methods, '_taxa.all.sum',  '.rds'))
+  fwrite(taxa.sum, paste0(outdir, '/', outdir, '_', methods, '_taxa.all.sum',  '.tsv'), sep = '\t', na = 'NA')
   #taxa.sum <- readRDS(paste0(outdir, '/', outdir, '_', 'taxa.all.sum_', methods, '.rds'))
 
   message('output of ', methods, ': ')
@@ -632,6 +634,7 @@ if (any(methods.to.use == 'LCA')) {
 
   ###
   saveRDS(taxa.sum, paste0(outdir, '/', outdir, '_', methods, '_taxa.all.sum',  '.rds'))
+  fwrite(taxa.sum, paste0(outdir, '/', outdir, '_', methods, '_taxa.all.sum',  '.tsv'), sep = '\t', na = 'NA')
   #taxa.sum <- readRDS(paste0(outdir, '/', outdir, '_', 'taxa.all.sum_', methods, '.rds'))
 
   message('output of ', methods, ': ')
@@ -733,6 +736,7 @@ if (any(methods.to.use == 'SpeciesEstimate')) {
 
   ###
   saveRDS(taxa.sum, paste0(outdir, '/', outdir, '_', methods, '_taxa.all.sum',  '.rds'))
+  fwrite(taxa.sum, paste0(outdir, '/', outdir, '_', methods, '_taxa.all.sum',  '.tsv'), sep = '\t', na = 'NA')
   #taxa.sum <- readRDS(paste0(outdir, '/', outdir, '_', 'taxa.all.sum_', methods, '.rds'))
 
   message('output of ', methods, ': ')

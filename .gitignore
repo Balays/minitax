@@ -1,1 +1,17 @@
 NCBI_genome_collection/database/all_sequences.fasta
+/work/**/*.fq
+/work/**/*.fq.gz
+/work/**/*.fastq
+/work/**/*.fastq.gz
+/work/**/rename_manifest.tsv
+/work/**/minitax_*
+!/work/**/*.config.tsv
+*.bam
+*.bam.bai
+*.bai
+*.idx
+*.mmi
+**/bundles/
+*.tar.gz.part-*
+*.component_sha256.tsv
+*.SHA256SUMS

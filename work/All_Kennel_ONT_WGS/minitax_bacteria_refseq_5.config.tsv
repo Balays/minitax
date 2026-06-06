@@ -1,0 +1,38 @@
+argument	value	step	description
+platform	ONT	both	Either: 'Illumina', 'PacBio' or 'ONT'
+db	all_NCBI_genomes	both	NCBI-style minitax taxonomy tables
+db.dir	/mnt/d/data/databases/minitax_bacteria_refseq	both	bacterial RefSeq database directory
+project	All_Kennel_ONT_WGS_bacteria_refseq_5	optional	project identifier
+Vregion	WGS	optional	whole-genome sequencing
+indir	fastq_5	minimap2	project-local FASTQ subset for this pilot run
+outdir	minitax_bacteria_refseq_5	both	project-local output directory
+debug	TRUE	both	print planned samples while mapping
+mm2_path	/home/kakuk/anaconda3/envs/minitax/bin/mm2-fast	minimap2	mm2-fast executable installed into the minitax env
+mm2_index	all_NCBI_genomes.idx	minimap2	minimap2 index filename relative to db.dir
+mm2_ref	all_NCBI_genomes.fna.gz	minimap2	reference FASTA filename relative to db.dir
+mapper_backend	auto	minimap2	auto uses Parabricks minimap2 when scripts/test_CUDA.sh passes, otherwise mm2_path
+parabricks_image	nvcr.io/nvidia/clara/clara-parabricks:4.7.0-1	minimap2	Parabricks Docker image for NVIDIA GPU mapping
+parabricks_num_gpus	1	minimap2	number of GPUs to request for Parabricks
+parabricks_extra_flags	NA	minimap2	extra flags passed to pbrun minimap2
+mm2_index_batch	128G	minimap2	minimap2 -I batch size for reliable MAPQ single-part indexes
+fastq_pair_pattern	_L001	minimap2	unused for ONT
+fastq_suffix	.fastq.gz	minimap2	extension of ONT FASTQ files
+reads	merged	minimap2	unused for ONT
+Nsec	20	minimap2	number of secondary alignments to keep in minimap2
+nproc	8	both	number of cores to use
+minitax.dir	/mnt/c/GitHub/minitax	minitax	minitax repository root
+misc.dir	/mnt/c/GitHub/minitax	minitax	helper-function directory
+metadata	metadata_5.tsv	minitax	project-local metadata for the five-sample pilot
+keep.highest.mapq.aln.only	T	minitax	keep one highest-MAPQ alignment per read before CIGAR scoring
+crop.na.tax	F	minitax	keep rank columns even when some ranks are NA
+multicore	T	minitax	run minitax in multicore mode
+saveRAM	F	minitax	keep intermediate objects in memory where possible
+mapq.filt	NA	minitax	do not filter by MAPQ
+outputs	bam.sum;best_alignments_w_taxa	minitax	per-sample mapping summary and cached best-alignment taxonomy
+methods	BestAln;SpeciesEstimate	minitax	taxonomic annotation methods for this pilot
+pardir	NA	minitax	legacy option; minitax uses outdir/bam
+pattern	.bam	minitax	legacy BAM suffix
+keep.max.cigar	T	minitax	keep only alignments with the highest CIGAR score for each read
+CIGAR_points	match_score = 1; mismatch_score = -3; insertion_score = -2; deletion_score = -2; gap_opening_penalty = -2; gap_extension_penalty = -1	minitax	rules for scoring alignments
+BestAln_thresholds	0.6	minitax	BestAln support threshold
+best.mapq	T	minitax	use highest MAPQ alignment before CIGAR scoring

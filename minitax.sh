@@ -15,6 +15,12 @@ Options:
   -h, --help     Show this help.
 
 The config format is the existing minitax tab-separated config file.
+Optional mapper config keys:
+  mapper_backend        auto, mm2-fast, minimap2, or parabricks. Default: auto.
+  parabricks_image      Docker image for Parabricks. Default: nvcr.io/nvidia/clara/clara-parabricks:4.7.0-1
+  parabricks_num_gpus   GPU count passed to Docker/Parabricks. Default: 1
+  parabricks_extra_flags
+  mm2_index_batch       minimap2 -I value for emergency index builds. Default: 128G
 EOF
 }
 
@@ -102,6 +108,24 @@ safe_name() {
   printf '%s' "$value"
 }
 
+abs_dir() {
+  local dir="$1"
+  (cd "$dir" && pwd -P)
+}
+
+is_under_dir() {
+  local child="$1"
+  local parent="$2"
+  [[ "$child" == "$parent" || "$child" == "$parent"/* ]]
+}
+
+parabricks_supports_preset() {
+  case "$1" in
+    map-ont|map-hifi|map-pbmm2|lr:hq|splice|splice:hq|splice:sr) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 CONFIG_FILE=""
 FORCE=0
 DRY_RUN=0
@@ -146,7 +170,7 @@ while IFS=$'\t' read -r argument value step description extra; do
   config["$argument"]="$value"
 done < "$CONFIG_FILE"
 
-for key in platform db db.dir indir fastq_suffix mm2_path mm2_index Nsec nproc; do
+for key in platform db db.dir indir fastq_suffix mm2_index Nsec nproc; do
   require_cfg "$key"
 done
 
@@ -155,7 +179,6 @@ db="$(strip_quotes "$(cfg db)")"
 db_dir="$(normalize_path "$(cfg db.dir)")"
 indir="$(normalize_path "$(cfg indir)")"
 suffix="$(cfg fastq_suffix)"
-mm2_bin="$(resolve_command "$(cfg mm2_path)" "minimap2")"
 samtools_bin="$(resolve_command samtools "samtools")"
 nsec="$(cfg Nsec)"
 nproc="$(cfg nproc)"
@@ -164,11 +187,30 @@ vregion="$(cfg Vregion WGS)"
 reads="$(cfg reads paired)"
 pair_pattern="$(cfg fastq_pair_pattern "")"
 mm2_index="$(cfg mm2_index)"
+mm2_index="${mm2_index//\\//}"
 mm2_ref="$(normalize_path "$(cfg mm2_ref "")")"
+mm2_index_batch="$(cfg mm2_index_batch 128G)"
+mapper_backend="$(cfg mapper_backend auto)"
+parabricks_image="$(cfg parabricks_image nvcr.io/nvidia/clara/clara-parabricks:4.7.0-1)"
+parabricks_num_gpus="$(cfg parabricks_num_gpus 1)"
+parabricks_extra_flags="$(cfg parabricks_extra_flags "")"
 debug="$(cfg debug FALSE)"
+mm2_path_value="$(cfg mm2_path "")"
+mm2_bin=""
 
 [[ "$nsec" =~ ^[0-9]+$ ]] || fail "Nsec must be a non-negative integer."
 [[ "$nproc" =~ ^[0-9]+$ && "$nproc" -gt 0 ]] || fail "nproc must be a positive integer."
+[[ "$mm2_index_batch" =~ ^[0-9]+[KkMmGgTt]?$ ]] || fail "mm2_index_batch must look like 128G, 64000M, or 500000000."
+case "$mapper_backend" in
+  auto|mm2-fast|minimap2|cpu|parabricks) ;;
+  *) fail "mapper_backend must be auto, mm2-fast, minimap2, cpu, or parabricks; got '$mapper_backend'." ;;
+esac
+if [[ "$mapper_backend" != "parabricks" ]]; then
+  require_cfg mm2_path
+  mm2_bin="$(resolve_command "$mm2_path_value" "minimap2")"
+elif [[ -n "$mm2_path_value" ]]; then
+  mm2_bin="$(resolve_command "$mm2_path_value" "minimap2")"
+fi
 [[ -d "$indir" ]] || fail "FASTQ input directory not found: $indir"
 [[ -d "$db_dir" ]] || fail "Database directory not found: $db_dir"
 
@@ -184,16 +226,35 @@ tmpdir="${outdir}/tmp"
 mkdir -p "$bamoutdir" "$logdir" "$tmpdir"
 
 index="${db_dir}/${mm2_index}"
-if [[ ! -s "$index" ]]; then
-  if [[ -n "$mm2_ref" && -s "${db_dir}/${mm2_ref}" ]]; then
-    mm2_ref="${db_dir}/${mm2_ref}"
+mm2_ref_path=""
+mm2_ref_rel=""
+if [[ -n "$mm2_ref" ]]; then
+  if [[ -s "${db_dir}/${mm2_ref}" ]]; then
+    mm2_ref_path="${db_dir}/${mm2_ref}"
+    mm2_ref_rel="$mm2_ref"
+  elif [[ -s "$mm2_ref" ]]; then
+    mm2_ref_path="$mm2_ref"
+    if is_under_dir "$mm2_ref_path" "$db_dir"; then
+      mm2_ref_rel="${mm2_ref_path#"$db_dir"/}"
+    fi
   fi
-  if [[ -n "$mm2_ref" && -s "$mm2_ref" ]]; then
+fi
+
+if [[ ! -s "$index" ]]; then
+  if [[ -n "$mm2_ref_path" && -s "$mm2_ref_path" ]]; then
     if [[ "$DRY_RUN" -eq 1 ]]; then
-      info "Would build missing minimap2 index: $index from $mm2_ref"
+      info "Would build missing minimap2 index: $index from $mm2_ref_path with -I $mm2_index_batch"
     else
-      info "Building missing minimap2 index: $index"
-      "$mm2_bin" -t "$nproc" -d "$index" "$mm2_ref" > "${logdir}/build_index.log" 2>&1
+      [[ -n "$mm2_bin" ]] || fail "mm2_path is required to build a missing minimap2 index."
+      info "Building missing minimap2 index: $index with -I $mm2_index_batch"
+      "${script_dir}/scripts/build_minimap2_index.sh" \
+        --db-dir "$db_dir" \
+        --fasta "$mm2_ref_path" \
+        --index "$mm2_index" \
+        --threads "$nproc" \
+        --index-batch-size "$mm2_index_batch" \
+        --minimap2 "$mm2_bin" \
+        --force
     fi
   else
     fail "minimap2 index not found: $index. Set mm2_ref to a FASTA if you want the mapper to build it."
@@ -292,6 +353,51 @@ if [[ "$debug" == "TRUE" || "$debug" == "T" || "$debug" == "true" ]]; then
   done
 fi
 
+db_dir_abs="$(abs_dir "$db_dir")"
+indir_abs="$(abs_dir "$indir")"
+bamoutdir_abs="$(abs_dir "$bamoutdir")"
+tmpdir_abs="$(abs_dir "$tmpdir")"
+
+parabricks_available=0
+if [[ "$mapper_backend" == "auto" || "$mapper_backend" == "parabricks" ]]; then
+  cuda_probe="${script_dir}/scripts/test_CUDA.sh"
+  if [[ -f "$cuda_probe" ]] && bash "$cuda_probe" --quiet --image "$parabricks_image" >/dev/null 2>&1; then
+    parabricks_available=1
+  fi
+fi
+
+choose_backend() {
+  local preset="$1"
+  case "$mapper_backend" in
+    mm2-fast|minimap2|cpu)
+      printf '%s' "minimap2"
+      ;;
+    parabricks)
+      parabricks_supports_preset "$preset" || fail "Parabricks minimap2 does not support preset '$preset'; use mapper_backend=auto or mm2-fast."
+      [[ "$parabricks_available" -eq 1 ]] || fail "mapper_backend=parabricks requested, but scripts/test_CUDA.sh did not pass."
+      [[ -n "$mm2_ref_path" && -n "$mm2_ref_rel" ]] || fail "Parabricks requires mm2_ref to point to a FASTA inside db.dir."
+      printf '%s' "parabricks"
+      ;;
+    auto)
+      if [[ "$parabricks_available" -eq 1 ]] && parabricks_supports_preset "$preset" && [[ -n "$mm2_ref_path" && -n "$mm2_ref_rel" ]]; then
+        printf '%s' "parabricks"
+      else
+        printf '%s' "minimap2"
+      fi
+      ;;
+  esac
+}
+
+first_backend="$(choose_backend "${planned_presets[0]}")"
+info "Requested mapper backend: $mapper_backend"
+info "Active mapper backend for '${planned_presets[0]}': $first_backend"
+if [[ "$first_backend" == "parabricks" ]]; then
+  info "Parabricks image: $parabricks_image"
+  info "Reference FASTA: $mm2_ref_path"
+else
+  info "minimap2 command: $mm2_bin"
+fi
+
 declare -a mapped=()
 declare -a skipped=()
 declare -a failed=()
@@ -302,13 +408,14 @@ map_sample() {
   local preset="$2"
   local read1="$3"
   local read2="${4:-}"
-  local safe_sample outbam tmpbam log split_prefix started ended status
+  local safe_sample outbam tmpbam log split_prefix started ended status sample_backend
 
   safe_sample="$(safe_name "$sample")"
   outbam="${bamoutdir}/${sample}.bam"
   tmpbam="${tmpdir}/${safe_sample}.$$.bam"
   log="${logdir}/${sample}.minimap2.log"
   split_prefix="${tmpdir}/${safe_sample}.split"
+  sample_backend="$(choose_backend "$preset")"
 
   if [[ "$FORCE" -eq 0 && -s "$outbam" && -s "${outbam}.bai" ]]; then
     info "Skipping existing BAM: $outbam"
@@ -319,13 +426,13 @@ map_sample() {
 
   started="$(date -Is)"
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    info "Planning sample '$sample' with minimap2 preset '$preset'..."
+    info "Planning sample '$sample' with preset '$preset' using backend '$sample_backend'..."
     printf '%s\t%s\t%s\t%s\t%s\t%s\tplanned\t%s\t%s\t%s\n' \
       "$sample" "$platform" "$preset" "$read1" "$read2" "$outbam" "$log" "$started" "$(date -Is)" >> "$manifest"
     return 3
   fi
 
-  info "Mapping sample '$sample' with minimap2 preset '$preset'..."
+  info "Mapping sample '$sample' with preset '$preset' using backend '$sample_backend'..."
   info "  log: $log"
 
   set +e
@@ -333,21 +440,55 @@ map_sample() {
     set -Eeuo pipefail
     echo "sample: $sample"
     echo "started: $started"
+    echo "backend: $sample_backend"
     echo "preset: $preset"
     echo "index: $index"
+    if [[ -n "$mm2_ref_path" ]]; then echo "ref: $mm2_ref_path"; fi
     echo "read1: $read1"
     if [[ -n "$read2" ]]; then echo "read2: $read2"; fi
     echo "bam: $outbam"
     echo
 
-    if [[ -n "$read2" ]]; then
-      "$mm2_bin" -ax "$preset" -t "$nproc" -Y -C5 --split-prefix "$split_prefix" -N "$nsec" "$index" "$read1" "$read2" |
-        "$samtools_bin" view -b -@ "$nproc" - |
-        "$samtools_bin" sort -@ "$nproc" -o "$tmpbam" -
+    if [[ "$sample_backend" == "parabricks" ]]; then
+      declare -a pb_cmd pb_extra
+      pb_cmd=(
+        docker run --rm --gpus "$parabricks_num_gpus"
+        --volume "${db_dir_abs}:/db:ro"
+        --volume "${indir_abs}:/reads:ro"
+        --volume "${tmpdir_abs}:/tmpdir"
+        --workdir /tmpdir
+        "$parabricks_image"
+        pbrun minimap2
+        --ref "/db/${mm2_ref_rel}"
+        --index "/db/${mm2_index}"
+        --in-fq "/reads/$(basename "$read1")"
+        --out-bam "/tmpdir/$(basename "$tmpbam")"
+        --preset "$preset"
+        --num-threads "$nproc"
+        --num-gpus "$parabricks_num_gpus"
+        --tmp-dir /tmpdir
+      )
+      if [[ -n "$read2" ]]; then
+        pb_cmd+=("/reads/$(basename "$read2")")
+      fi
+      if [[ -n "$parabricks_extra_flags" ]]; then
+        read -r -a pb_extra <<< "$parabricks_extra_flags"
+        pb_cmd+=("${pb_extra[@]}")
+      fi
+      printf 'command:'
+      printf ' %q' "${pb_cmd[@]}"
+      printf '\n\n'
+      "${pb_cmd[@]}"
     else
-      "$mm2_bin" -ax "$preset" -t "$nproc" -Y -C5 --split-prefix "$split_prefix" -N "$nsec" "$index" "$read1" |
-        "$samtools_bin" view -b -@ "$nproc" - |
-        "$samtools_bin" sort -@ "$nproc" -o "$tmpbam" -
+      if [[ -n "$read2" ]]; then
+        "$mm2_bin" -ax "$preset" -t "$nproc" -Y -C5 --split-prefix "$split_prefix" -N "$nsec" "$index" "$read1" "$read2" |
+          "$samtools_bin" view -b -@ "$nproc" - |
+          "$samtools_bin" sort -@ "$nproc" -o "$tmpbam" -
+      else
+        "$mm2_bin" -ax "$preset" -t "$nproc" -Y -C5 --split-prefix "$split_prefix" -N "$nsec" "$index" "$read1" |
+          "$samtools_bin" view -b -@ "$nproc" - |
+          "$samtools_bin" sort -@ "$nproc" -o "$tmpbam" -
+      fi
     fi
 
     "$samtools_bin" index -@ "$nproc" "$tmpbam"

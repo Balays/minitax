@@ -10,6 +10,11 @@ debug	FALSE	both	if there was a problem, try to show in which step
 mm2_path	minimap2	minimap2	path to minimap2, or minimap2 if it is available in PATH
 mm2_index	all_NCBI_genomes.idx	minimap2	filename of minimap2 index, relative to db.dir
 mm2_ref	NA	minimap2	filename of minimap2 reference database (.fasta), if there's no index yet (relative to db.dir)
+mapper_backend	auto	minimap2	auto uses Parabricks minimap2 when scripts/test_CUDA.sh passes, otherwise mm2_path
+parabricks_image	nvcr.io/nvidia/clara/clara-parabricks:4.7.0-1	minimap2	Parabricks Docker image for NVIDIA GPU mapping
+parabricks_num_gpus	1	minimap2	number of GPUs to request for Parabricks
+parabricks_extra_flags	NA	minimap2	extra flags passed to pbrun minimap2
+mm2_index_batch	128G	minimap2	minimap2 -I batch size for reliable MAPQ single-part indexes
 fastq_pair_pattern	_L001	minimap2	In case of Illumina paired-end seq what is the common pattern for the pairs? Usually it is L0001, and what is after
 fastq_suffix	_001.fastq.gz	minimap2	extension of fastq files
 reads	paired	minimap2	For Illumina only: either paired or merged

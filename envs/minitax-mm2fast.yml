@@ -1,0 +1,25 @@
+name: minitax-mm2fast
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - bash
+  - coreutils
+  - grep
+  - sed
+  - gawk
+  - gzip
+  - samtools
+  - r-base=4.4
+  - r-data.table
+  - r-dplyr
+  - r-tidyr
+  - r-ggplot2
+  - r-readr
+  - r-stringi
+  - r-stringr
+  - r-purrr
+  - r-future.apply
+  - bioconductor-rsamtools
+  - bioconductor-genomicalignments
+  - bioconductor-phyloseq

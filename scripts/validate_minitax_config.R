@@ -183,6 +183,16 @@ check_integer <- function(name, min_value = NULL, max_value = NULL, required = T
   invisible(number)
 }
 
+check_index_batch_size <- function(name, default = "128G") {
+  value <- get_cfg(name, default)
+  if (is_config_na(value)) value <- default
+  if (!grepl("^[0-9]+[KkMmGgTt]?$", value)) {
+    err(name %+% " must look like 128G, 64000M, or 500000000.")
+  } else {
+    ok(name %+% " = " %+% value)
+  }
+}
+
 check_logical <- function(name, required = FALSE) {
   value <- get_cfg(name)
   if (is_config_na(value)) {
@@ -518,10 +528,23 @@ check_classify_inputs <- function() {
 }
 
 require_keys(c("platform", "db", "db.dir", "nproc"))
-for (name in c("db", "db.dir", "indir", "outdir", "mm2_path", "mm2_index", "mm2_ref", "minitax.dir", "misc.dir")) {
+for (name in c("db", "db.dir", "indir", "outdir", "mm2_path", "mm2_index", "mm2_ref", "mapper_backend", "parabricks_image", "mm2_index_batch", "minitax.dir", "misc.dir")) {
   check_no_quotes(name)
 }
 check_choice("platform", c("Illumina", "ONT", "PacBio"))
+mapper_backend <- get_cfg("mapper_backend", "auto")
+if (!mapper_backend %in% c("auto", "mm2-fast", "minimap2", "cpu", "parabricks")) {
+  err("mapper_backend must be one of: auto, mm2-fast, minimap2, cpu, parabricks.")
+} else {
+  ok("mapper_backend = " %+% mapper_backend)
+}
+check_index_batch_size("mm2_index_batch")
+parabricks_num_gpus <- get_cfg("parabricks_num_gpus", "1")
+if (!grepl("^[0-9]+$", parabricks_num_gpus) || as.integer(parabricks_num_gpus) < 1) {
+  err("parabricks_num_gpus must be a positive integer.")
+} else {
+  ok("parabricks_num_gpus = " %+% parabricks_num_gpus)
+}
 check_integer("nproc", min_value = 1)
 cores <- parallel::detectCores(logical = TRUE)
 if (!is.na(cores)) {
@@ -543,10 +566,21 @@ if (step %in% c("all", "map", "database", "classify")) {
 
 if (step %in% c("all", "map")) {
   mm2_path <- get_cfg("mm2_path")
-  if (is_config_na(mm2_path)) {
-    err("mm2_path is required by minitax.sh.")
+  mapper_backend <- get_cfg("mapper_backend", "auto")
+  if (is_config_na(mm2_path) && mapper_backend != "parabricks") {
+    err("mm2_path is required by minitax.sh unless mapper_backend=parabricks.")
+  } else if (is_config_na(mm2_path)) {
+    warn("mm2_path is missing; mapper_backend=parabricks will not be able to build a missing minimap2 index.")
   } else {
     check_executable(mm2_path, "minimap2 executable", required = TRUE)
+  }
+  if (mapper_backend == "parabricks") {
+    mm2_ref <- get_cfg("mm2_ref")
+    if (is_config_na(mm2_ref)) {
+      err("mapper_backend=parabricks requires mm2_ref to point to the reference FASTA.")
+    }
+    check_command("docker", "docker", required = FALSE)
+    check_command("nvidia-smi", "nvidia-smi", required = FALSE)
   }
   check_command("samtools", "samtools", required = TRUE)
   check_integer("Nsec", min_value = 0)
