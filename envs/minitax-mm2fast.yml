@@ -16,6 +16,7 @@ dependencies:
   - minimap2
   - samtools
   - zlib
+  - libzlib
   - r-base=4.4
   - r-data.table
   - r-dplyr

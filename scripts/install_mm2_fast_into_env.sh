@@ -23,6 +23,8 @@ Options:
 The script creates these environment-local commands:
   ENV_PREFIX/bin/mm2-fast
   ENV_PREFIX/bin/minimap2-mm2fast
+  ENV_PREFIX/bin/mm2-fast.{avx2,avx,sse42,sse41}
+  ENV_PREFIX/bin/minimap2-mm2fast.{avx2,avx,sse42,sse41}
 
 mm2-fast is not distributed as a conda package in this repo. It is built from
 source and then linked/copied into the active environment.
@@ -79,18 +81,40 @@ fi
 
 [[ -x "$SOURCE" ]] || fail "mm2-fast minimap2 binary is not executable: $SOURCE"
 
+SOURCE_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+SOURCE_BASE="$(basename "$SOURCE")"
+SOURCE="${SOURCE_DIR}/${SOURCE_BASE}"
+
+shopt -s nullglob
+SOURCE_VARIANTS=("${SOURCE}".*)
+shopt -u nullglob
+[[ "${#SOURCE_VARIANTS[@]}" -gt 0 ]] || fail "No mm2-fast SIMD executables found next to ${SOURCE}; expected files like ${SOURCE}.avx2"
+
+install_one() {
+  local src="$1"
+  local dest="$2"
+  if [[ "$COPY" -eq 1 ]]; then
+    cp "$src" "$dest"
+    chmod +x "$dest"
+  else
+    ln -sfn "$src" "$dest"
+  fi
+}
+
 for name in mm2-fast minimap2-mm2fast; do
   target="${ENV_PREFIX}/bin/${name}"
-  if [[ "$COPY" -eq 1 ]]; then
-    cp "$SOURCE" "$target"
-    chmod +x "$target"
-  else
-    ln -sfn "$SOURCE" "$target"
-  fi
+  install_one "$SOURCE" "$target"
+
+  for variant in "${SOURCE_VARIANTS[@]}"; do
+    suffix="${variant#"$SOURCE"}"
+    [[ -x "$variant" ]] || continue
+    install_one "$variant" "${target}${suffix}"
+  done
 done
 
 echo "Installed mm2-fast command links:"
 echo "  ${ENV_PREFIX}/bin/mm2-fast -> ${SOURCE}"
 echo "  ${ENV_PREFIX}/bin/minimap2-mm2fast -> ${SOURCE}"
+echo "  SIMD variants installed with matching command prefixes"
 echo
 "${ENV_PREFIX}/bin/mm2-fast" --version
