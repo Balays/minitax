@@ -23,7 +23,10 @@ RSCRIPT="${RSCRIPT:-$(command -v Rscript || true)}"
 
 cd "$project_dir"
 
-"${project_dir}/prepare_minitax_5_inputs.sh"
+config_indir="$(awk -F '\t' '$1 == "indir" { print $2; exit }' "$config")"
+if [[ "$config_indir" == "fastq_5" || "$config_indir" == "./fastq_5" || "$config_indir" == "${project_dir}/fastq_5" ]]; then
+  "${project_dir}/prepare_minitax_5_inputs.sh"
+fi
 "${project_dir}/place_minitax_5_output_on_d.sh" "$config"
 
 case "$mode" in
