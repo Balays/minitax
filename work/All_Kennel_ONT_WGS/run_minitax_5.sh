@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo_dir="/mnt/c/GitHub/minitax"
+repo_dir="$(cd "${project_dir}/../.." && pwd)"
 config="${CONFIG_FILE:-${project_dir}/minitax_bacteria_refseq_5.config.tsv}"
 mode="${1:-all}"
 
@@ -18,8 +18,8 @@ case "$mode" in
     ;;
 esac
 
-export PATH="/home/kakuk/anaconda3/envs/minitax/bin:${PATH}"
-export RSCRIPT="/home/kakuk/mambaforge/envs/R_4.4/bin/Rscript"
+RSCRIPT="${RSCRIPT:-$(command -v Rscript || true)}"
+[[ -n "$RSCRIPT" ]] || { echo "Rscript not found in PATH; activate the minitax environment or set RSCRIPT." >&2; exit 1; }
 
 cd "$project_dir"
 

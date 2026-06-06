@@ -7,7 +7,7 @@ Vregion	WGS	optional	whole-genome sequencing
 indir	fastq_5	minimap2	project-local FASTQ subset for this pilot run
 outdir	minitax_all_ncbi_genomes_5	both	project-local output directory
 debug	TRUE	both	print planned samples while mapping
-mm2_path	/home/kakuk/anaconda3/envs/minitax/bin/mm2-fast	minimap2	mm2-fast executable installed into the minitax env
+mm2_path	mm2-fast	minimap2	mm2-fast executable installed into the active minitax env
 mm2_index	all_NCBI_genomes.idx	minimap2	minimap2 index filename relative to db.dir
 mm2_ref	all_NCBI_genomes.fna.gz	minimap2	reference FASTA filename relative to db.dir
 mapper_backend	auto	minimap2	auto uses Parabricks minimap2 when scripts/test_CUDA.sh passes, otherwise mm2_path
@@ -20,8 +20,8 @@ fastq_suffix	.fastq.gz	minimap2	extension of ONT FASTQ files
 reads	merged	minimap2	unused for ONT
 Nsec	20	minimap2	number of secondary alignments to keep in minimap2
 nproc	8	both	number of cores to use
-minitax.dir	/mnt/c/GitHub/minitax	minitax	minitax repository root
-misc.dir	/mnt/c/GitHub/minitax	minitax	helper-function directory
+minitax.dir	/home/mdbio/minitax	minitax	minitax repository root
+misc.dir	/home/mdbio/minitax	minitax	helper-function directory
 metadata	metadata_5.tsv	minitax	project-local metadata for the five-sample pilot
 keep.highest.mapq.aln.only	T	minitax	keep one highest-MAPQ alignment per read before CIGAR scoring
 crop.na.tax	F	minitax	keep rank columns even when some ranks are NA

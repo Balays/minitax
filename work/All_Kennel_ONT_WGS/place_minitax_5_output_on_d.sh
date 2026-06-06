@@ -13,7 +13,15 @@ if [[ -z "$output_name" || "$output_name" == "NA" ]]; then
   exit 1
 fi
 
-output_target="/mnt/d/data/Gemini/All_Kennel_ONT_WGS/${output_name}"
+if [[ -z "${MINITAX_OUTPUT_ROOT:-}" ]]; then
+  mkdir -p "$output_name"
+  echo "Output directory:"
+  ls -ld "$output_name"
+  df -h "$output_name" 2>/dev/null || true
+  exit 0
+fi
+
+output_target="${MINITAX_OUTPUT_ROOT%/}/${output_name}"
 
 mkdir -p "$output_target"
 
