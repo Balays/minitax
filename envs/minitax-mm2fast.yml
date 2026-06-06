@@ -5,11 +5,17 @@ channels:
 dependencies:
   - bash
   - coreutils
+  - git
+  - make
+  - gcc_linux-64
+  - gxx_linux-64
   - grep
   - sed
   - gawk
   - gzip
+  - minimap2
   - samtools
+  - zlib
   - r-base=4.4
   - r-data.table
   - r-dplyr

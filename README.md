@@ -139,9 +139,23 @@ By default, `mapper_backend=auto` tries NVIDIA Parabricks minimap2 only when the
 local CUDA/Docker/Parabricks test passes. Otherwise it uses `mm2_path`, usually
 `mm2-fast` or vanilla `minimap2`.
 
+Install mm2-fast after creating/activating the conda environment:
+```
+mamba env update -f envs/minitax-mm2fast.yml --prune
+mamba activate minitax-mm2fast
+scripts/install_mm2_fast_into_env.sh
+mm2-fast --version
+```
+
+The installer clones and builds mm2-fast from
+https://github.com/bwa-mem2/mm2-fast, then creates environment-local
+`mm2-fast` and `minimap2-mm2fast` commands. The mm2-fast README describes it as
+a drop-in accelerated minimap2 implementation for Linux x86_64 CPUs with AVX2
+or AVX512, built with `git clone --recursive ... && make`.
+
 Relevant config keys:
 ```
-mm2_path	/home/kakuk/anaconda3/envs/minitax/bin/mm2-fast
+mm2_path	mm2-fast
 mapper_backend	auto
 parabricks_image	nvcr.io/nvidia/clara/clara-parabricks:4.7.0-1
 parabricks_num_gpus	1
