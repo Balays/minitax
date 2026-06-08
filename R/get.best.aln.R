@@ -15,14 +15,10 @@ get.best.aln <- function(bam, bam.flags, best.mapq=T, rm.supplementary=T, rm.sec
   luniq.qname <- length(unique(bam.seq$qname))
   ### get best mapq
   if (best.mapq) {
-    bam.mapq <- bam.seq %>% group_by(qname) %>% reframe(qname, mapq.max=max(mapq))
-    #bam.mapq <- unique.data.frame(bam.mapq)
-    bam.mapq <- bam.mapq %>% distinct(qname, mapq.max)
-    bam.seq  <- as.data.frame(merge(
-      data.table(bam.seq), 
-      data.table(bam.mapq), 
-      by.x = c('qname', 'mapq'), 
-      by.y = c('qname', 'mapq.max')) )
+    bam.seq <- data.table(bam.seq)
+    bam.seq[, mapq.max := max(mapq), by = qname]
+    bam.seq <- bam.seq[mapq == mapq.max | (is.na(mapq) & is.na(mapq.max))]
+    bam.seq[, mapq.max := NULL]
 
     if (luniq.qname != length(unique(bam.seq$qname))) {
       message('When filtering for best mapq, ', luniq.qname - length(unique(bam.seq$qname)), ' reads were dropped!')
@@ -68,7 +64,7 @@ get.best.aln <- function(bam, bam.flags, best.mapq=T, rm.supplementary=T, rm.sec
     } else {stop('error rm.reads.or.alns must be either "reads" or "alns" ')}
     bam.seq    <- bam.nosec
     if (luniq.qname != length(unique(bam.seq$qname))) {
-      noprim <- setdiff(bam$qname, bam.nosupp$qname)
+      noprim <- setdiff(bam$qname, bam.nosec$qname)
       message('When filtering out secondary alignments, ', luniq.qname - length(unique(bam.seq$qname)), ' reads were dropped!')
     } else {
 

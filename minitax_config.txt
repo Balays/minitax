@@ -27,8 +27,10 @@ keep.highest.mapq.aln.only	T	minitax	in case of multi-mapping reads, keep the on
 crop.na.tax	F	minitax	???
 multicore	T	minitax	Run minitax in multicore?
 saveRAM	F	minitax	Frequently save intermediate files and load them back in, or be as fast as possible?
+reuse.taxa.cache	T	minitax	Reuse valid best_alignments_w_taxa cache files when BAM/config/database metadata match
+dt.threads	1	minitax	number of data.table threads to use inside each minitax worker
 mapq.filt	NA	minitax	If other than NA, filter out alignments with MAPQ values lower than this
-outputs	bam.sum
+outputs	bam.sum;best_alignments_w_taxa	minitax	output directories to write; semicolon or comma separated
 methods	BestAln;SpeciesEstimate	minitax
 pardir	NA	minitax	directory of bamfiles
 pattern	.bam	minitax	pattern of bamfiles (for subseting)

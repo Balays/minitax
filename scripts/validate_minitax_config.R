@@ -546,12 +546,13 @@ if (!grepl("^[0-9]+$", parabricks_num_gpus) || as.integer(parabricks_num_gpus) <
   ok("parabricks_num_gpus = " %+% parabricks_num_gpus)
 }
 check_integer("nproc", min_value = 1)
+check_integer("dt.threads", min_value = 1, required = FALSE)
 cores <- parallel::detectCores(logical = TRUE)
 if (!is.na(cores)) {
   nproc <- suppressWarnings(as.integer(get_cfg("nproc")))
   if (!is.na(nproc) && nproc > cores) warn("nproc (" %+% nproc %+% ") is greater than detected cores (" %+% cores %+% ").")
 }
-for (name in c("debug", "keep.highest.mapq.aln.only", "crop.na.tax", "multicore", "saveRAM", "keep.max.cigar", "best.mapq")) {
+for (name in c("debug", "keep.highest.mapq.aln.only", "crop.na.tax", "multicore", "saveRAM", "reuse.taxa.cache", "keep.max.cigar", "best.mapq")) {
   check_logical(name, required = FALSE)
 }
 check_mapq()

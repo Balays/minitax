@@ -110,6 +110,10 @@ set_config_default("best.mapq", "TRUE")
 set_config_default("keep.max.cigar", "TRUE")
 set_config_default("keep.highest.mapq.aln.only", "TRUE")
 set_config_default("crop.na.tax", "FALSE")
+set_config_default("multicore", "TRUE")
+set_config_default("saveRAM", "FALSE")
+set_config_default("reuse.taxa.cache", "TRUE")
+set_config_default("dt.threads", "1")
 set_config_default("CIGAR_points", "match_score = 1; mismatch_score = -3; insertion_score = -2; deletion_score = -2; gap_opening_penalty = -2; gap_extension_penalty = -1")
 
 nproc <- as.integer(config$nproc) #args[2] #32 #
@@ -297,6 +301,14 @@ message(db.name, ' database loaded')
 
 message('The following taxon levels will be used: ', paste0(ranks, collapse='; '))
 
+if (is.data.table(db.uni.data)) {
+  if ('seqnames' %in% colnames(db.uni.data)) {
+    setkeyv(db.uni.data, 'seqnames')
+  } else if ('taxid' %in% colnames(db.uni.data)) {
+    setkeyv(db.uni.data, 'taxid')
+  }
+}
+
 
 
 #### ####
@@ -313,7 +325,7 @@ bamfiles  <- if (dir.exists(pardir)) {
 }
 cached.taxa.files <- list.files(
   file.path(outdir, 'best_alignments_w_taxa'),
-  '.*_best_alignments_w_taxa.tsv',
+  '.*_best_alignments_w_taxa\\.tsv$',
   full.names = TRUE
 )
 
@@ -372,6 +384,14 @@ mapq.filt   <- config$mapq.filt; if(!is_config_na(mapq.filt)) {
 }
 methods.to.use <- split_config_values(config$methods, default = 'BestAln')
 best.mapq      <- parse_logical_config(config$best.mapq, default = TRUE)
+multicore      <- parse_logical_config(config$multicore, default = TRUE)
+saveRAM        <- parse_logical_config(config$saveRAM, default = FALSE)
+reuse.taxa.cache <- parse_logical_config(config$reuse.taxa.cache, default = TRUE)
+dt.threads     <- as.integer(config$dt.threads)
+if (is.na(dt.threads) || dt.threads < 1) {
+  stop("Config argument dt.threads must be a positive integer.", call. = FALSE)
+}
+data.table::setDTthreads(dt.threads)
 
 keep.max.cigar <- parse_logical_config(config$keep.max.cigar, default = TRUE)
 CIGAR_points   <- separate(data.frame(stringr::str_split_1(config$CIGAR_points, ';\\s*')), col = 1, into = c('key', 'value'), sep = '\\s*=\\s*')
@@ -380,6 +400,14 @@ if (any(is.na(CIGAR_points$value))) {
   stop("CIGAR_points contains non-integer values.", call. = FALSE)
 }
 CIGAR_points <- CIGAR_points %>% spread(key, value)
+
+runtime.outputs <- outputs
+if (length(bamfiles) > 0 || length(methods.to.use) > 1) {
+  runtime.outputs <- unique(c(runtime.outputs, 'best_alignments_w_taxa'))
+}
+for (resdir in runtime.outputs) {
+  dir.create(file.path(outdir, resdir), recursive = TRUE, showWarnings = FALSE)
+}
 
 
 #### configs used
@@ -391,412 +419,186 @@ print(t(config))
 message('Constructed metadata:')
 print(metadata)
 
-#### Set up future to use multiple cores  with future
-if (Sys.info()[["sysname"]] == 'Windows') {
-  plan(multisession, workers = nproc)
-} else {
-  plan(multicore, workers = nproc)
+#### Set up future to use multiple cores with future
+configure_minitax_plan <- function(task_count) {
+  workers <- max(1L, min(nproc, max(1L, task_count)))
+  if (!multicore) {
+    plan(sequential)
+    message("future plan: sequential")
+    return(1L)
+  }
+  if (Sys.info()[["sysname"]] == 'Windows') {
+    plan(multisession, workers = workers)
+    message("future plan: multisession with ", workers, " worker(s)")
+  } else {
+    plan(multicore, workers = workers)
+    message("future plan: multicore with ", workers, " worker(s)")
+  }
+  workers
+}
+
+timing.records <- list()
+record_timing <- function(timing.dt) {
+  if (is.null(timing.dt) || nrow(timing.dt) == 0) return(invisible(NULL))
+  timing.records[[length(timing.records) + 1L]] <<- timing.dt
+  fwrite(rbindlist(timing.records, fill = TRUE),
+         file.path(outdir, 'classification_timing.tsv'),
+         sep = '\t', na = 'NA')
+  invisible(NULL)
+}
+
+write_method_outputs <- function(methods, taxa.sum) {
+  setDT(taxa.sum)
+  saveRDS(taxa.sum, method_result_path(methods, '_taxa.all.sum.rds'))
+  fwrite(taxa.sum, method_result_path(methods, '_taxa.all.sum.tsv'), sep = '\t', na = 'NA')
+
+  message('output of ', methods, ': ')
+  print(head(taxa.sum))
+
+  if (!HAS_PHYLOSEQ) {
+    message("Skipping phyloseq object for ", methods, " because phyloseq is not installed.")
+    return(invisible(NULL))
+  }
+
+  ps <- NULL
+  taxa.for.ps <- copy(taxa.sum)
+  try({
+    if (methods == 'SpeciesEstimate') {
+      taxa.for.ps[, count := norm_count]
+    }
+
+    sample_data        <- metadata
+    sample_data$method <- methods
+
+    taxa.for.ps <- taxa.for.ps[, c('tax.identity', 'lineage', ranks, 'sample', 'count'), with = FALSE]
+    taxa.for.ps[is.na(tax.identity), c('tax.identity', 'lineage', ranks) := 'unclassified']
+
+    otutab <- dcast.data.table(taxa.for.ps, lineage ~ sample, value.var = 'count', fill = 0)
+    otutab <- data.frame(otutab[, -1, with = FALSE], row.names = otutab$lineage)
+
+    taxtab <- data.frame(unique(taxa.for.ps[, c('lineage', ranks, 'tax.identity'), with = FALSE]))
+    rownames(taxtab) <- taxtab$lineage
+    taxtab <- taxtab[rownames(otutab), ]
+
+    ps <- phyloseq(otu_table(as.matrix(otutab), taxa_are_rows = TRUE),
+                   tax_table(as.matrix(taxtab)),
+                   sample_data(sample_data))
+
+    sample_names(ps) <- paste(sample_data(ps)$workflow, sample_data(ps)$db,
+                              sample_data(ps)$method, sample_names(ps), sep = '_')
+
+    message('Generated phyloseq object: ')
+    print(ps)
+    saveRDS(ps, method_result_path(methods, '_PS.rds'))
+  })
+  if (is.null(ps)) stop("phyloseq object could not be created!")
+  invisible(NULL)
+}
+
+run_minitax_method <- function(methods, taxa.files) {
+  message('\n \n ', methods, ' method started, on: ', date())
+  message('Running ', methods, ' from cached tax-annotated alignments: \n',
+          paste(taxa.files, collapse = '\n'))
+
+  configure_minitax_plan(length(taxa.files))
+  method.results <- future_lapply(
+    taxa.files,
+    summarise_minitax_taxa_file,
+    config = config,
+    methods = methods,
+    keep.max.cigar = keep.max.cigar,
+    CIGAR_points = CIGAR_points,
+    mapq.filt = mapq.filt,
+    outputs = outputs,
+    best.mapq = best.mapq,
+    db = db,
+    db.data = db.data,
+    db.uni.data = db.uni.data,
+    ranks = ranks,
+    outdir = outdir,
+    dt.threads = dt.threads,
+    future.seed = TRUE
+  )
+
+  record_timing(rbindlist(lapply(method.results, `[[`, 'timing'), fill = TRUE))
+  taxa.sum <- rbindlist(lapply(method.results, `[[`, 'taxa.sum'), fill = TRUE)
+
+  if (methods == 'LCA') {
+    taxa.sum <- rename_duptaxa(taxa.sum, ranks = ranks)
+  } else if (methods == 'SpeciesEstimate') {
+    taxID <- ranks[length(ranks)]
+    taxa.sum[, tax.identity := get(taxID)]
+    taxa.sum[is.na(tax.identity), tax.identity := 'unclassified']
+    taxa.sum[, lineage := tax.identity]
+  }
+
+  write_method_outputs(methods, taxa.sum)
+  if (saveRAM) {
+    rm(method.results, taxa.sum)
+    gc()
+  }
+  message(methods, ' method finished, on: ', date(), '\n \n ')
+  invisible(NULL)
 }
 
 ####
 message('everything is ready! Starting minitax!')
 
-
 #### RUN MINITAX ON ALIGNMENTS ####
+taxa.files <- character()
+if (length(bamfiles) > 0) {
+  bam.paths <- file.path(pardir, bamfiles)
+  message('Preparing reusable best_alignments_w_taxa cache from BAM files: \n',
+          paste(bam.paths, collapse = '\n'))
 
+  configure_minitax_plan(length(bam.paths))
+  cache.results <- future_lapply(
+    bam.paths,
+    prepare_minitax_taxa_cache,
+    config = config,
+    keep.max.cigar = keep.max.cigar,
+    CIGAR_points = CIGAR_points,
+    mapq.filt = mapq.filt,
+    outputs = runtime.outputs,
+    best.mapq = best.mapq,
+    db = db,
+    db.data = db.data,
+    db.uni.data = db.uni.data,
+    ranks = ranks,
+    outdir = outdir,
+    reuse.taxa.cache = reuse.taxa.cache,
+    dt.threads = dt.threads,
+    future.seed = TRUE
+  )
 
-#### 1. Best Alignment Method -->> best precision !
-if (any(methods.to.use == 'BestAln')) {
-  ###
-  methods  <- 'BestAln'
-  message('\n \n ', methods, ' method started, on: ', date())
-
-  ### from tax identity results
-  ### from tax identity results
-  taxa_or_bamfile <- list.files(file.path(outdir,  'best_alignments_w_taxa'),
-                                '.*_best_alignments_w_taxa.tsv', full.names = T)
-  if(length(taxa_or_bamfile) > 0) {
-    input <- 'taxa.DT'
-  } else {
-    ### from bafiles
-    taxa_or_bamfile <- paste0(pardir, '/', bamfiles[])
-    input <- 'bamfile'
+  record_timing(rbindlist(lapply(cache.results, `[[`, 'timing'), fill = TRUE))
+  taxa.files <- vapply(cache.results, `[[`, character(1), 'cache_file')
+  if (saveRAM) {
+    rm(cache.results)
+    gc()
   }
-
-  message('Running minitax on the following files: \n',
-          paste(taxa_or_bamfile, collapse = '\n'))
-
-  plan(multisession)
-  taxa.sum.BestAln <- rbindlist(
-    future_lapply(taxa_or_bamfile[],
-                  wrap.fun.complete,
-                  config=config,
-                  input=input,
-                  #sample=gsub(pattern, '', gsub('.*/', '', bamfiles)),
-                  methods=methods,
-                  keep.max.cigar=keep.max.cigar, CIGAR_points=CIGAR_points,
-                  mapq.filt=mapq.filt,
-
-                  saveRDS=F,
-                  steps=c('1.Import_Alns', '2.Refine', '3.Find_taxidentity', '4.Summarise'),
-                  best.mapq=best.mapq,
-
-                  db=db, db.data=db.data, db.uni.data=db.uni.data,
-                  ranks = ranks # c("superkingdom", "phylum", "class", "order", "family", "genus", "species")
-    ), fill=TRUE)
-  taxa.sum <- taxa.sum.BestAln
-  setDT(taxa.sum)
-
-  ###
-  saveRDS(taxa.sum, method_result_path(methods, '_taxa.all.sum.rds'))
-  fwrite(taxa.sum, method_result_path(methods, '_taxa.all.sum.tsv'), sep = '\t', na = 'NA')
-
-  message('output of ', methods, ': ')
-  print(head(taxa.sum))
-
-  #### Generate phyloseq objects ####
-  if (HAS_PHYLOSEQ) {
-  ps <- NULL
-  try({
-    sample_data        <- metadata
-    sample_data$method <- methods
-
-    setDF(taxa.sum)
-    taxa.sum <- taxa.sum[,c('tax.identity', 'lineage', ranks,  'sample', 'count')]
-    taxa.sum[is.na(taxa.sum$tax.identity), c('tax.identity', 'lineage', ranks)] <- 'unclassified'
-
-    setDT(taxa.sum)
-    otutab <- dcast.data.table(taxa.sum, lineage ~ sample, value.var = 'count', fill=0)
-    otutab <- data.frame(otutab[,-1], row.names = otutab$lineage)
-
-    setDF(taxa.sum)
-    taxtab <- data.frame(unique(taxa.sum[,c('lineage', ranks, 'tax.identity')]))
-    rownames(taxtab) <- taxtab$lineage
-
-    taxtab <- taxtab[rownames(otutab), ]
-
-    ps <- phyloseq(otu_table(as.matrix(otutab), taxa_are_rows = T),
-                   tax_table(as.matrix(taxtab)),
-                   sample_data(sample_data))
-
-    sample_names(ps)   <- paste(sample_data(ps)$workflow, sample_data(ps)$db, sample_data(ps)$method, sample_names(ps), sep='_')
-
-    message('Generated phyloseq object: ')
-    print(ps)
-
-    ###
-    saveRDS(ps, method_result_path(methods, '_PS.rds'))
-    ps.minitax.BA <- ps
-  })
-  if(is.null(ps)) stop("phyloseq object could not be created!")
-  } else {
-    message("Skipping phyloseq object for ", methods, " because phyloseq is not installed.")
-  }
-
-  message(methods, ' method finished, on: ', date(), '\n \n ')
-
+} else {
+  taxa.files <- cached.taxa.files
+  message('No BAM files found; using existing cached tax-annotated alignments.')
 }
-####
 
-
-
-#### 2. Random Alignment Method
-if (any(methods.to.use == 'RandAln')) {
-  ###
-  methods  <- 'RandAln'
-  message('\n \n ', methods, ' method started, on: ', date())
-
-  ### from tax identity results
-  taxa_or_bamfile <- list.files(file.path(outdir,  'best_alignments_w_taxa'),
-                                '.*_best_alignments_w_taxa.tsv', full.names = T)
-  if(length(taxa_or_bamfile) > 0) {
-    input <- 'taxa.DT'
-  } else {
-    ### from bafiles
-    taxa_or_bamfile <- paste0(pardir, '/', bamfiles[])
-    input <- 'bamfile'
-  }
-
-  message('Running minitax on the following files: \n',
-          paste(taxa_or_bamfile, collapse = '\n'))
-
-  plan(multisession)
-  taxa.sum.RandAln <- rbindlist(
-    future_lapply(taxa_or_bamfile[],
-                  wrap.fun.complete,
-                  config=config,
-                  input=input,
-                  #sample=gsub(pattern, '', gsub('.*/', '', bamfiles)),
-                  methods=methods,
-                  keep.max.cigar=keep.max.cigar, CIGAR_points=CIGAR_points,
-                  mapq.filt=mapq.filt,
-
-                  saveRDS=F,
-                  steps=c('1.Import_Alns', '2.Refine', '3.Find_taxidentity', '4.Summarise'),
-                  best.mapq=best.mapq,
-
-                  db=db, db.data=db.data, db.uni.data=db.uni.data,
-                  ranks = ranks # c("superkingdom", "phylum", "class", "order", "family", "genus", "species")
-    ), fill=TRUE)
-  taxa.sum <- taxa.sum.RandAln
-  setDT(taxa.sum)
-
-  ###
-  saveRDS(taxa.sum, method_result_path(methods, '_taxa.all.sum.rds'))
-  fwrite(taxa.sum, method_result_path(methods, '_taxa.all.sum.tsv'), sep = '\t', na = 'NA')
-  #taxa.sum <- readRDS(paste0(outdir, '/', outdir, '_', 'taxa.all.sum_', methods, '.rds'))
-
-  message('output of ', methods, ': ')
-  print(head(taxa.sum))
-
-  #### Generate phyloseq objects ####
-  if (HAS_PHYLOSEQ) {
-   ps <- NULL
-  try({
-    sample_data        <- metadata
-    sample_data$method <- methods
-
-    setDF(taxa.sum)
-    taxa.sum <- taxa.sum[,c('tax.identity', 'lineage', ranks,  'sample', 'count')]
-    taxa.sum[is.na(taxa.sum$tax.identity), c('tax.identity', 'lineage', ranks)] <- 'unclassified'
-
-    setDT(taxa.sum)
-    otutab <- dcast.data.table(taxa.sum, lineage ~ sample, value.var = 'count', fill=0)
-    otutab <- data.frame(otutab[,-1], row.names = otutab$lineage)
-
-    setDF(taxa.sum)
-    taxtab <- data.frame(unique(taxa.sum[,c('lineage', ranks, 'tax.identity')]))
-    rownames(taxtab) <- taxtab$lineage
-
-    taxtab <- taxtab[rownames(otutab), ]
-
-    ps <- phyloseq(otu_table(as.matrix(otutab), taxa_are_rows = T),
-                   tax_table(as.matrix(taxtab)),
-                   sample_data(sample_data))
-
-    sample_names(ps)   <- paste(sample_data(ps)$workflow, sample_data(ps)$db, sample_data(ps)$method, sample_names(ps), sep='_')
-
-    message('Generated phyloseq object: ')
-    print(ps)
-
-    ###
-    saveRDS(ps, method_result_path(methods, '_PS.rds'))
-    ps.minitax.RA <- ps
-  })
-  if(is.null(ps)) stop("phyloseq object could not be created!")
-  } else {
-    message("Skipping phyloseq object for ", methods, " because phyloseq is not installed.")
-  }
-
-  message(methods, ' method finished, on: ', date(), '\n \n ')
-
+taxa.files <- taxa.files[file.exists(taxa.files)]
+if (length(taxa.files) == 0) {
+  stop("No best_alignments_w_taxa cache files are available for summarisation.", call. = FALSE)
 }
-####
 
-
-#### 3. LCA Method  -->> Summarize the reads on their tax.identity
-if (any(methods.to.use == 'LCA')) {
-  ###
-  methods  <- 'LCA'
-  message(methods, ' method started, on: ', date())
-
-  ### from tax identity results
-  taxa_or_bamfile <- list.files(file.path(outdir,  'best_alignments_w_taxa'),
-                                '.*_best_alignments_w_taxa.tsv', full.names = T)
-  if(length(taxa_or_bamfile) > 0) {
-    input <- 'taxa.DT'
-  } else {
-    ### from bafiles
-    taxa_or_bamfile <- paste0(pardir, '/', bamfiles[])
-    input <- 'bamfile'
-  }
-
-  message('Running minitax on the following files: \n',
-          paste(taxa_or_bamfile, collapse = '\n'))
-
-  plan(multisession)
-
-  taxa.sum.LCA <- rbindlist(
-     future_lapply(taxa_or_bamfile[],
-                   wrap.fun.complete,
-                   config=config,
-                   input=input,
-                   #sample=gsub(pattern, '', gsub('.*/', '', bamfiles)),
-                   methods=methods,
-                   keep.max.cigar=keep.max.cigar, CIGAR_points=CIGAR_points,
-                   mapq.filt=mapq.filt,
-
-                   saveRDS=F,
-                   steps=c('1.Import_Alns', '2.Refine', '3.Find_taxidentity', '4.Summarise'),
-                   best.mapq=best.mapq,
-
-                   db=db, db.data=db.data, db.uni.data=db.uni.data,
-                   ranks = ranks # c("superkingdom", "phylum", "class", "order", "family", "genus", "species")
-    ), fill=TRUE)
-  taxa.sum.LCA <- rename_duptaxa(taxa.sum.LCA, ranks=ranks)
-  taxa.sum <- taxa.sum.LCA
-
-
-  ###
-  saveRDS(taxa.sum, method_result_path(methods, '_taxa.all.sum.rds'))
-  fwrite(taxa.sum, method_result_path(methods, '_taxa.all.sum.tsv'), sep = '\t', na = 'NA')
-  #taxa.sum <- readRDS(paste0(outdir, '/', outdir, '_', 'taxa.all.sum_', methods, '.rds'))
-
-  message('output of ', methods, ': ')
-  print(head(taxa.sum))
-
-
-  #### Generate phyloseq objects ####
-  if (HAS_PHYLOSEQ) {
-  ps <- NULL
-  try({
-    sample_data        <- metadata
-    sample_data$method <- methods
-
-    setDF(taxa.sum)
-    taxa.sum <- taxa.sum[,c('tax.identity', 'lineage', ranks,  'sample', 'count')]
-    taxa.sum[is.na(taxa.sum$tax.identity), c('tax.identity', 'lineage', ranks)] <- 'unclassified'
-
-    setDT(taxa.sum)
-    otutab <- dcast.data.table(taxa.sum, lineage ~ sample, value.var = 'count', fill=0)
-    otutab <- data.frame(otutab[,-1], row.names = otutab$lineage)
-
-    setDF(taxa.sum)
-    taxtab <- data.frame(unique(taxa.sum[,c('lineage', ranks, 'tax.identity')]))
-    rownames(taxtab) <- taxtab$lineage
-
-  taxtab <- taxtab[rownames(otutab), ]
-
-    ps <- phyloseq(otu_table(as.matrix(otutab), taxa_are_rows = T),
-                   tax_table(as.matrix(taxtab)),
-                   sample_data(sample_data))
-
-    sample_names(ps)   <- paste(sample_data(ps)$workflow, sample_data(ps)$db, sample_data(ps)$method, sample_names(ps), sep='_')
-
-    message('Generated phyloseq object: ')
-    print(ps)
-
-    ###
-    saveRDS(ps, method_result_path(methods, '_PS.rds'))
-    ps.minitax.LCA <- ps
-  })
-  if(is.null(ps)) stop("phyloseq object could not be created!")
-  } else {
-    message("Skipping phyloseq object for ", methods, " because phyloseq is not installed.")
-  }
-
-  message(methods, ' method finished, on: ', date(), '\n \n ')
-
+for (methods in methods.to.use) {
+  run_minitax_method(methods, taxa.files)
 }
-####
 
-
-#### 4. Species Estimation Method -->> much faster !
-if (any(methods.to.use == 'SpeciesEstimate')) {
-  ###
-  methods  <- 'SpeciesEstimate'
-  message(methods, ' method started, on: ', date())
-
-  ### from tax identity results
-  taxa_or_bamfile <- list.files(file.path(outdir,  'best_alignments_w_taxa'),
-                                '.*_best_alignments_w_taxa.tsv', full.names = T)
-  if(length(taxa_or_bamfile) > 0) {
-    input <- 'taxa.DT'
-  } else {
-    ### from bafiles
-    taxa_or_bamfile <- paste0(pardir, '/', bamfiles[])
-    input <- 'bamfile'
-  }
-
-  message('Running minitax on the following files: \n',
-          paste(taxa_or_bamfile, collapse = '\n'))
-
-  plan(multisession)
-
-  taxID <- ranks[length(ranks)]
-
-  taxa.sum.SpecEst <- rbindlist(
-    future_lapply(taxa_or_bamfile[],
-                  wrap.fun.complete,
-                  config=config,
-                  input=input,
-                  #sample=gsub(pattern, '', gsub('.*/', '', bamfiles)),
-                  methods=methods,
-                  keep.max.cigar=keep.max.cigar, CIGAR_points=CIGAR_points,
-                  mapq.filt=mapq.filt,
-
-                  saveRDS=F,
-                  steps=c('1.Import_Alns', '2.Refine', '3.Find_taxidentity', '4.Summarise'),
-                  best.mapq=best.mapq,
-
-                  db=db, db.data=db.data, db.uni.data=db.uni.data,
-                  ranks = ranks # c("superkingdom", "phylum", "class", "order", "family", "genus", "species")
-    ), fill=TRUE)
-
-  taxa.sum.SpecEst[, tax.identity := get(taxID)]
-  taxa.sum.SpecEst[is.na(tax.identity), tax.identity:= 'unclassified']
-  taxa.sum.SpecEst[, lineage  := tax.identity]
-
-  taxa.sum <- taxa.sum.SpecEst
-
-  ###
-  saveRDS(taxa.sum, method_result_path(methods, '_taxa.all.sum.rds'))
-  fwrite(taxa.sum, method_result_path(methods, '_taxa.all.sum.tsv'), sep = '\t', na = 'NA')
-  #taxa.sum <- readRDS(paste0(outdir, '/', outdir, '_', 'taxa.all.sum_', methods, '.rds'))
-
-  message('output of ', methods, ': ')
-  print(head(taxa.sum))
-
-
-
-  #### Generate phyloseq objects ####
-  if (HAS_PHYLOSEQ) {
-  ps <- NULL
-  try({
-
-    ## for species estimate, the output is normalized
-    taxa.sum[,count := norm_count]
-
-    #
-    sample_data        <- metadata
-    sample_data$method <- methods
-
-    setDF(taxa.sum)
-    taxa.sum <- taxa.sum[,c('tax.identity', 'lineage', ranks,  'sample', 'count')]
-    taxa.sum[is.na(taxa.sum$tax.identity), c('tax.identity', 'lineage', ranks)] <- 'unclassified'
-
-    setDT(taxa.sum)
-    otutab <- dcast.data.table(taxa.sum, lineage ~ sample, value.var = 'count', fill=0)
-    otutab <- data.frame(otutab[,-1], row.names = otutab$lineage)
-
-    setDF(taxa.sum)
-    taxtab <- data.frame(unique(taxa.sum[,c('lineage', ranks, 'tax.identity')]))
-    rownames(taxtab) <- taxtab$lineage
-
-    taxtab <- taxtab[rownames(otutab), ]
-
-    ps <- phyloseq(otu_table(as.matrix(otutab), taxa_are_rows = T),
-                   tax_table(as.matrix(taxtab)),
-                   sample_data(sample_data))
-
-    sample_names(ps)   <- paste(sample_data(ps)$workflow, sample_data(ps)$db, sample_data(ps)$method, sample_names(ps), sep='_')
-
-    message('Generated phyloseq object: ')
-    print(ps)
-
-    ###
-    saveRDS(ps, method_result_path(methods, '_PS.rds'))
-    ps.minitax.SE <- ps
-  })
-  if(is.null(ps)) stop("phyloseq object could not be created!")
-  } else {
-    message("Skipping phyloseq object for ", methods, " because phyloseq is not installed.")
-  }
-
-  message(methods, ' method finished, on: ', date(), '\n \n ')
-
+if (length(timing.records) > 0) {
+  fwrite(rbindlist(timing.records, fill = TRUE),
+         file.path(outdir, 'classification_timing.tsv'),
+         sep = '\t', na = 'NA')
+  message('Classification timing written to: ', file.path(outdir, 'classification_timing.tsv'))
 }
-####
+
+plan(sequential)
 #### ####
 
 ##############################

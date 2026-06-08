@@ -51,7 +51,10 @@ minitax2 <- function(minimap2, db='proGcontigs', db.data=prog.db, db.uni.data=NU
     
     cols <- c('seqnames', 'taxid', ranks)
     minimap2.contigs <- minimap2[,c('qname', 'rname', 'flag', 'mapq', 'cigar')]
-    minimap2.taxa    <- merge(minimap2.contigs, db.uni.data[,..cols], by.x='rname', by.y='seqnames', all=F)
+    db.uni.sub       <- db.uni.data[,..cols]
+    if (!data.table::haskey(db.uni.sub)) setkeyv(db.uni.sub, 'seqnames')
+    minimap2.taxa    <- db.uni.sub[minimap2.contigs, on=.(seqnames = rname), nomatch=0]
+    setnames(minimap2.taxa, 'seqnames', 'rname')
     taxa.contigs     <- unique(minimap2.taxa, by=c( "qname", "mapq","taxid", ranks))
     
   } else {stop('db must be one of the following: ProGenomes; rrnDB; EMUdb or mouse.toy !')}

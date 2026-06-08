@@ -1,3 +1,238 @@
+minitax_is_config_na <- function(value) {
+  length(value) == 0 || is.na(value) || !nzchar(trimws(value)) || toupper(trimws(value)) %in% c("NA", "NULL")
+}
+
+minitax_split_config_values <- function(value, default = character()) {
+  if (is.null(value) || minitax_is_config_na(value)) return(default)
+  values <- trimws(unlist(strsplit(as.character(value), "[;,]")))
+  values[nzchar(values)]
+}
+
+minitax_normalize_outputs <- function(outputs = NULL, config = NULL) {
+  if (!is.null(outputs) && length(outputs) > 0) {
+    values <- unlist(lapply(outputs, minitax_split_config_values))
+    values <- values[nzchar(values)]
+    if (length(values) > 0) return(unique(values))
+  }
+  if (!is.null(config) && 'outputs' %in% names(config)) {
+    return(minitax_split_config_values(config$outputs, default = 'bam.sum'))
+  }
+  'bam.sum'
+}
+
+minitax_outdir <- function() {
+  if (exists('outdir', inherits = TRUE)) return(get('outdir', inherits = TRUE))
+  stop('Global outdir is not defined.', call. = FALSE)
+}
+
+minitax_sample_from_bam <- function(bamfile) {
+  sub('\\.bam$', '', basename(bamfile))
+}
+
+minitax_cache_file <- function(sample, outdir = minitax_outdir()) {
+  file.path(outdir, 'best_alignments_w_taxa', paste0(sample, '_best_alignments_w_taxa.tsv'))
+}
+
+minitax_cache_meta_file <- function(sample, outdir = minitax_outdir()) {
+  file.path(outdir, 'best_alignments_w_taxa', paste0(sample, '_best_alignments_w_taxa.meta.tsv'))
+}
+
+minitax_scalar <- function(value) {
+  paste(as.character(unlist(value)), collapse = ';')
+}
+
+minitax_cache_signature <- function(bamfile, config, db, mapq.filt, best.mapq,
+                                    keep.max.cigar, CIGAR_points, ranks) {
+  bam.info <- file.info(bamfile)
+  db.dir <- if (!is.null(config) && 'db.dir' %in% names(config)) config$db.dir else ''
+  signature <- data.table(
+    cache_key = c('bamfile', 'bam_size', 'bam_mtime', 'db', 'db.dir', 'mapq.filt',
+                  'best.mapq', 'keep.max.cigar', 'CIGAR_points', 'ranks'),
+    value = c(
+      normalizePath(bamfile, mustWork = FALSE),
+      minitax_scalar(bam.info$size),
+      if (is.na(bam.info$mtime)) '' else format(bam.info$mtime, tz = 'UTC', usetz = TRUE),
+      minitax_scalar(db),
+      normalizePath(db.dir, mustWork = FALSE),
+      minitax_scalar(mapq.filt),
+      minitax_scalar(best.mapq),
+      minitax_scalar(keep.max.cigar),
+      minitax_scalar(CIGAR_points),
+      minitax_scalar(ranks)
+    )
+  )
+  setnames(signature, 'cache_key', 'key')
+  signature
+}
+
+minitax_cache_signature_matches <- function(meta.file, signature) {
+  if (!file.exists(meta.file)) return(FALSE)
+  old <- tryCatch(fread(meta.file, sep = '\t', colClasses = 'character'),
+                  error = function(e) data.table())
+  if (!all(c('key', 'value') %in% colnames(old))) return(FALSE)
+  old <- old[match(signature$key, key)]
+  all(!is.na(old$key)) && identical(old$value, signature$value)
+}
+
+minitax_write_cache_signature <- function(meta.file, signature) {
+  dir.create(dirname(meta.file), recursive = TRUE, showWarnings = FALSE)
+  fwrite(signature, meta.file, sep = '\t', na = 'NA')
+}
+
+minitax_score_cigars <- function(cigars, CIGAR_points) {
+  unique.cigars <- unique(cigars)
+  scores <- vapply(
+    unique.cigars,
+    cigar_score,
+    numeric(1),
+    match_score = CIGAR_points$match_score,
+    mismatch_score = CIGAR_points$mismatch_score,
+    insertion_score = CIGAR_points$insertion_score,
+    deletion_score = CIGAR_points$deletion_score,
+    gap_opening_penalty = CIGAR_points$gap_opening_penalty,
+    gap_extension_penalty = CIGAR_points$gap_extension_penalty
+  )
+  unname(scores[match(cigars, unique.cigars)])
+}
+
+minitax_with_dt_threads <- function(dt.threads = 1L) {
+  dt.threads <- as.integer(dt.threads)
+  if (is.na(dt.threads) || dt.threads < 1L) dt.threads <- 1L
+  old <- data.table::getDTthreads()
+  data.table::setDTthreads(dt.threads)
+  old
+}
+
+prepare_minitax_taxa_cache <- function(taxa_or_bamfile, config = config,
+                                       keep.max.cigar = TRUE, CIGAR_points = NULL,
+                                       methods = 'TaxaCache', outputs = NULL,
+                                       best.mapq = TRUE, mapq.filt = NA,
+                                       db = 'proGcontigs', db.data = prog.db,
+                                       db.uni.data = prog.db.uni,
+                                       ranks = c("superkingdom", "phylum", "class", "order", "family", "genus", "species"),
+                                       outdir = minitax_outdir(),
+                                       reuse.taxa.cache = TRUE, dt.threads = 1L) {
+  old.threads <- minitax_with_dt_threads(dt.threads)
+  on.exit(data.table::setDTthreads(old.threads), add = TRUE)
+
+  started <- Sys.time()
+  sample <- minitax_sample_from_bam(taxa_or_bamfile)
+  cache.file <- minitax_cache_file(sample, outdir = outdir)
+  meta.file <- minitax_cache_meta_file(sample, outdir = outdir)
+  outputs <- unique(c(minitax_normalize_outputs(outputs, config), 'best_alignments_w_taxa'))
+  signature <- minitax_cache_signature(taxa_or_bamfile, config, db, mapq.filt,
+                                       best.mapq, keep.max.cigar, CIGAR_points, ranks)
+
+  if (isTRUE(reuse.taxa.cache) &&
+      file.exists(cache.file) &&
+      minitax_cache_signature_matches(meta.file, signature)) {
+    message('Reusing valid best_alignments_w_taxa cache for ', sample, ': ', cache.file)
+    finished <- Sys.time()
+    return(list(
+      cache_file = cache.file,
+      timing = data.table(
+        sample = sample,
+        stage = 'cache',
+        method = NA_character_,
+        status = 'reused',
+        elapsed_sec = as.numeric(difftime(finished, started, units = 'secs')),
+        rows_in = NA_integer_,
+        rows_out = NA_integer_,
+        file = cache.file
+      )
+    ))
+  }
+
+  message('Building best_alignments_w_taxa cache for ', sample, ': ', cache.file)
+  taxa <- wrap.fun.complete(
+    taxa_or_bamfile,
+    config = config,
+    input = 'bamfile',
+    methods = methods,
+    keep.max.cigar = keep.max.cigar,
+    CIGAR_points = CIGAR_points,
+    mapq.filt = mapq.filt,
+    outputs = outputs,
+    saveRDS = FALSE,
+    steps = c('1.Import_Alns', '2.Refine', '3.Find_taxidentity'),
+    best.mapq = best.mapq,
+    db = db,
+    db.data = db.data,
+    db.uni.data = db.uni.data,
+    ranks = ranks,
+    outdir = outdir
+  )
+  if (is.null(taxa) || nrow(taxa) == 0) {
+    stop('No tax-annotated alignments were produced for ', sample, call. = FALSE)
+  }
+  if (!file.exists(cache.file)) {
+    dir.create(dirname(cache.file), recursive = TRUE, showWarnings = FALSE)
+    fwrite(taxa, cache.file, sep = '\t', na = 'NA')
+  }
+  minitax_write_cache_signature(meta.file, signature)
+  finished <- Sys.time()
+  list(
+    cache_file = cache.file,
+    timing = data.table(
+      sample = sample,
+      stage = 'cache',
+      method = NA_character_,
+      status = 'rebuilt',
+      elapsed_sec = as.numeric(difftime(finished, started, units = 'secs')),
+      rows_in = NA_integer_,
+      rows_out = nrow(taxa),
+      file = cache.file
+    )
+  )
+}
+
+summarise_minitax_taxa_file <- function(taxa_or_bamfile, config = config,
+                                        methods = NULL,
+                                        keep.max.cigar = TRUE, CIGAR_points = NULL,
+                                        outputs = NULL, best.mapq = TRUE,
+                                        mapq.filt = NA,
+                                        db = 'proGcontigs', db.data = prog.db,
+                                        db.uni.data = prog.db.uni,
+                                        ranks = c("superkingdom", "phylum", "class", "order", "family", "genus", "species"),
+                                        outdir = minitax_outdir(),
+                                        dt.threads = 1L) {
+  old.threads <- minitax_with_dt_threads(dt.threads)
+  on.exit(data.table::setDTthreads(old.threads), add = TRUE)
+  started <- Sys.time()
+  sample <- gsub('_best_alignments_w_taxa.tsv$', '', basename(taxa_or_bamfile))
+  taxa.sum <- wrap.fun.complete(
+    taxa_or_bamfile,
+    config = config,
+    input = 'taxa.DT',
+    methods = methods,
+    keep.max.cigar = keep.max.cigar,
+    CIGAR_points = CIGAR_points,
+    mapq.filt = mapq.filt,
+    outputs = minitax_normalize_outputs(outputs, config),
+    saveRDS = FALSE,
+    steps = c('4.Summarise'),
+    best.mapq = best.mapq,
+    db = db,
+    db.data = db.data,
+    db.uni.data = db.uni.data,
+    ranks = ranks,
+    outdir = outdir
+  )
+  finished <- Sys.time()
+  list(
+    taxa.sum = taxa.sum,
+    timing = data.table(
+      sample = sample,
+      stage = 'summarise',
+      method = methods,
+      status = 'completed',
+      elapsed_sec = as.numeric(difftime(finished, started, units = 'secs')),
+      rows_in = NA_integer_,
+      rows_out = if (is.null(taxa.sum)) 0L else nrow(taxa.sum),
+      file = taxa_or_bamfile
+    )
+  )
+}
 
 wrap.fun.complete <- function(taxa_or_bamfile, pattern='.bam', sample=NULL,
                               input='bamfile', ## possible inputs: c('DT', 'list', 'bamfile', '.rds'),
@@ -7,12 +242,14 @@ wrap.fun.complete <- function(taxa_or_bamfile, pattern='.bam', sample=NULL,
                               keep.max.cigar=T, CIGAR_points=NULL,
                               methods=NULL,
                               saveRDS=F, cropnumbers=F,
-                              outputs=unlist(strsplit(config$outputs, ', ')),
+                              outputs=NULL,
                               best.mapq=T, mapq.filt=NA,
                               db='proGcontigs', db.data=prog.db,  db.uni.data=prog.db.uni,
-                              ranks = c("superkingdom", "phylum", "class", "order", "family", "genus", "species")
+                              ranks = c("superkingdom", "phylum", "class", "order", "family", "genus", "species"),
+                              outdir = minitax_outdir()
 
                               ) {
+  outputs <- minitax_normalize_outputs(outputs, config)
   bam <- data.table(NULL)
   bam.filt <- data.table(NULL)
   minimap2 <- data.table(NULL)
@@ -93,14 +330,12 @@ wrap.fun.complete <- function(taxa_or_bamfile, pattern='.bam', sample=NULL,
 
     ## summarise
     message('Summarising alignments statistics ...')
-    bam.dist <- bam.filt %>% distinct(sample, qname, mapq) # rname
-    bam.dist$mapq[is.na(bam.dist$mapq)] <- 'NA-CIGAR'
-    bam.dist <- bam.dist %>% group_by(sample, qname) %>% reframe(mapq, n_unique_aln=seq_along(mapq))
-    bam.dist.sp <- bam.dist %>% spread(n_unique_aln, mapq)
-    bam.dist.sp$is.all.NA <- apply(bam.dist.sp %>% dplyr::select(-c(qname)),            1, function(x) all(is.na(x) | x == 'NA-CIGAR'))
-    bam.dist.sp$max.mapq  <- apply(bam.dist.sp %>% dplyr::select(-c(qname, is.all.NA)), 1, function(x) max(x, na.rm = T))
-
-    bam.sum  <- bam.dist.sp %>% group_by(sample, is.all.NA) %>% reframe(is.mapped=n())
+    bam.dist <- unique(bam.filt[, .(sample, qname, mapq)])
+    bam.sum <- bam.dist[, .(is.all.NA = all(is.na(mapq)),
+                            max.mapq = suppressWarnings(max(mapq, na.rm = TRUE))),
+                        by = .(sample, qname)]
+    bam.sum[is.infinite(max.mapq), max.mapq := NA_real_]
+    bam.sum <- bam.sum[, .(is.mapped = .N), by = .(sample, is.all.NA)]
     #bam.sum$sample <- sample
 
     ### write output
@@ -142,13 +377,7 @@ wrap.fun.complete <- function(taxa_or_bamfile, pattern='.bam', sample=NULL,
 
       # Apply the function using data.table
       #system.time({
-      minimap2[, cigar_score := cigar_score(cigar,
-                                            match_score = CIGAR_points$match_score,
-                                            mismatch_score = CIGAR_points$mismatch_score,
-                                            insertion_score = CIGAR_points$insertion_score,
-                                            deletion_score = CIGAR_points$deletion_score,
-                                            gap_opening_penalty = CIGAR_points$gap_opening_penalty,
-                                            gap_extension_penalty = CIGAR_points$gap_extension_penalty)]
+      minimap2[, cigar_score := minitax_score_cigars(cigar, CIGAR_points)]
       #})
 
       # Add a new column 'max_cigar_score'
@@ -202,7 +431,9 @@ wrap.fun.complete <- function(taxa_or_bamfile, pattern='.bam', sample=NULL,
 
     ### write output
     if (any(outputs %in% 'best_alignments_w_taxa')) {
-      fwrite(taxa, paste0(outdir, '/', 'best_alignments_w_taxa/', sample,  '_best_alignments_w_taxa.tsv')) }
+      dir.create(file.path(outdir, 'best_alignments_w_taxa'), recursive = TRUE, showWarnings = FALSE)
+      fwrite(taxa, paste0(outdir, '/', 'best_alignments_w_taxa/', sample,  '_best_alignments_w_taxa.tsv'),
+             sep = '\t', na = 'NA') }
 
   } else {
     ##
@@ -470,6 +701,7 @@ wrap.fun.complete <- function(taxa_or_bamfile, pattern='.bam', sample=NULL,
 
   try({
 
+    method.label <- if (is.null(methods) || length(methods) == 0 || is.na(methods)) 'workflow' else methods
     aln_summary <- data.frame(
            raw_bam       = nrow(bam),
            filt_bam      = nrow(bam.filt),
@@ -480,7 +712,7 @@ wrap.fun.complete <- function(taxa_or_bamfile, pattern='.bam', sample=NULL,
 
 
     print(list('Number of alignments in each step:', aln_summary))
-    fwrite(aln_summary,     paste0(outdir, '/', sample,  '_', methods, '_aln_summary.tsv'), sep = '\t')
+    fwrite(aln_summary,     paste0(outdir, '/', sample,  '_', method.label, '_aln_summary.tsv'), sep = '\t')
 
   })
 
@@ -517,5 +749,3 @@ wrap.fun.complete <- function(taxa_or_bamfile, pattern='.bam', sample=NULL,
 
 
 }
-
-
