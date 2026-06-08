@@ -423,15 +423,15 @@ print(metadata)
 configure_minitax_plan <- function(task_count) {
   workers <- max(1L, min(nproc, max(1L, task_count)))
   if (!multicore) {
-    plan(sequential)
+    future::plan(future::sequential)
     message("future plan: sequential")
     return(1L)
   }
   if (Sys.info()[["sysname"]] == 'Windows') {
-    plan(multisession, workers = workers)
+    future::plan(future::multisession, workers = workers)
     message("future plan: multisession with ", workers, " worker(s)")
   } else {
-    plan(multicore, workers = workers)
+    future::plan(future::multicore, workers = workers)
     message("future plan: multicore with ", workers, " worker(s)")
   }
   workers
@@ -598,7 +598,7 @@ if (length(timing.records) > 0) {
   message('Classification timing written to: ', file.path(outdir, 'classification_timing.tsv'))
 }
 
-plan(sequential)
+future::plan(future::sequential)
 #### ####
 
 ##############################
