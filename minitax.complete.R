@@ -184,6 +184,11 @@ default.outdir <- paste('minitax', project, platform, Vregion, db, sep = '_')
 outdir    <- if (is_config_na(config$outdir)) default.outdir else config$outdir
 #outdir <- paste0(outdir, '.partII')
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+outdir.label <- basename(gsub("[/\\\\]+$", "", outdir))
+if (is_config_na(outdir.label)) outdir.label <- "minitax"
+method_result_path <- function(methods, suffix) {
+  file.path(outdir, paste0(outdir.label, "_", methods, suffix))
+}
 
 
 bam.all.out      <- paste0(outdir, '/', 'bam.all.tsv')
@@ -443,8 +448,8 @@ if (any(methods.to.use == 'BestAln')) {
   setDT(taxa.sum)
 
   ###
-  saveRDS(taxa.sum, paste0(outdir, '/', outdir, '_', methods, '_taxa.all.sum',  '.rds'))
-  fwrite(taxa.sum, paste0(outdir, '/', outdir, '_', methods, '_taxa.all.sum',  '.tsv'), sep = '\t', na = 'NA')
+  saveRDS(taxa.sum, method_result_path(methods, '_taxa.all.sum.rds'))
+  fwrite(taxa.sum, method_result_path(methods, '_taxa.all.sum.tsv'), sep = '\t', na = 'NA')
 
   message('output of ', methods, ': ')
   print(head(taxa.sum))
@@ -480,7 +485,7 @@ if (any(methods.to.use == 'BestAln')) {
     print(ps)
 
     ###
-    saveRDS(ps, paste0(outdir, '/', outdir, '_', methods, '_PS.rds'))
+    saveRDS(ps, method_result_path(methods, '_PS.rds'))
     ps.minitax.BA <- ps
   })
   if(is.null(ps)) stop("phyloseq object could not be created!")
@@ -537,8 +542,8 @@ if (any(methods.to.use == 'RandAln')) {
   setDT(taxa.sum)
 
   ###
-  saveRDS(taxa.sum, paste0(outdir, '/', outdir, '_', methods, '_taxa.all.sum',  '.rds'))
-  fwrite(taxa.sum, paste0(outdir, '/', outdir, '_', methods, '_taxa.all.sum',  '.tsv'), sep = '\t', na = 'NA')
+  saveRDS(taxa.sum, method_result_path(methods, '_taxa.all.sum.rds'))
+  fwrite(taxa.sum, method_result_path(methods, '_taxa.all.sum.tsv'), sep = '\t', na = 'NA')
   #taxa.sum <- readRDS(paste0(outdir, '/', outdir, '_', 'taxa.all.sum_', methods, '.rds'))
 
   message('output of ', methods, ': ')
@@ -575,7 +580,7 @@ if (any(methods.to.use == 'RandAln')) {
     print(ps)
 
     ###
-    saveRDS(ps, paste0(outdir, '/', outdir, '_', methods, '_PS.rds'))
+    saveRDS(ps, method_result_path(methods, '_PS.rds'))
     ps.minitax.RA <- ps
   })
   if(is.null(ps)) stop("phyloseq object could not be created!")
@@ -633,8 +638,8 @@ if (any(methods.to.use == 'LCA')) {
 
 
   ###
-  saveRDS(taxa.sum, paste0(outdir, '/', outdir, '_', methods, '_taxa.all.sum',  '.rds'))
-  fwrite(taxa.sum, paste0(outdir, '/', outdir, '_', methods, '_taxa.all.sum',  '.tsv'), sep = '\t', na = 'NA')
+  saveRDS(taxa.sum, method_result_path(methods, '_taxa.all.sum.rds'))
+  fwrite(taxa.sum, method_result_path(methods, '_taxa.all.sum.tsv'), sep = '\t', na = 'NA')
   #taxa.sum <- readRDS(paste0(outdir, '/', outdir, '_', 'taxa.all.sum_', methods, '.rds'))
 
   message('output of ', methods, ': ')
@@ -672,7 +677,7 @@ if (any(methods.to.use == 'LCA')) {
     print(ps)
 
     ###
-    saveRDS(ps, paste0(outdir, '/', outdir, '_', methods, '_PS.rds'))
+    saveRDS(ps, method_result_path(methods, '_PS.rds'))
     ps.minitax.LCA <- ps
   })
   if(is.null(ps)) stop("phyloseq object could not be created!")
@@ -735,8 +740,8 @@ if (any(methods.to.use == 'SpeciesEstimate')) {
   taxa.sum <- taxa.sum.SpecEst
 
   ###
-  saveRDS(taxa.sum, paste0(outdir, '/', outdir, '_', methods, '_taxa.all.sum',  '.rds'))
-  fwrite(taxa.sum, paste0(outdir, '/', outdir, '_', methods, '_taxa.all.sum',  '.tsv'), sep = '\t', na = 'NA')
+  saveRDS(taxa.sum, method_result_path(methods, '_taxa.all.sum.rds'))
+  fwrite(taxa.sum, method_result_path(methods, '_taxa.all.sum.tsv'), sep = '\t', na = 'NA')
   #taxa.sum <- readRDS(paste0(outdir, '/', outdir, '_', 'taxa.all.sum_', methods, '.rds'))
 
   message('output of ', methods, ': ')
@@ -780,7 +785,7 @@ if (any(methods.to.use == 'SpeciesEstimate')) {
     print(ps)
 
     ###
-    saveRDS(ps, paste0(outdir, '/', outdir, '_', methods, '_PS.rds'))
+    saveRDS(ps, method_result_path(methods, '_PS.rds'))
     ps.minitax.SE <- ps
   })
   if(is.null(ps)) stop("phyloseq object could not be created!")
