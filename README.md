@@ -30,9 +30,30 @@ After determining the best taxonomic assignment for each read, it summarizes rea
 
 
 ## Installing
-the program can be downloaded from github using
+the program can be downloaded from github and installed using mamba
 ```
+# 1. Clone minitax
 git clone https://github.com/Balays/minitax.git
+
+cd minitax
+
+# 2. Create the env where you want it to live
+mamba env create \
+  -p ~/mambaforge/envs/minitax-mm2fast \
+  -f envs/minitax-mm2fast.yml
+
+# 3. Activate it
+mamba activate /home/mdbio/mamba/envs/minitax-mm2fast
+
+# 3. Install zlib for mm2-fast
+mamba install -c conda-forge zlib libzlib
+
+# 4. Make scripts executable, useful after Windows/WSL checkouts
+chmod +x minitax.sh minitax_validate.sh scripts/*.sh
+
+# 5. Build and install mm2-fast into this env
+bash scripts/install_mm2_fast_into_env.sh \
+  --env-prefix "$CONDA_PREFIX"
 ```
 
 

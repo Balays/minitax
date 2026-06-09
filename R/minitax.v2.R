@@ -47,17 +47,36 @@ minitax2 <- function(minimap2, db='proGcontigs', db.data=prog.db, db.uni.data=NU
     minimap2.contigs <- data.table(taxid=as.numeric(gsub(':.*', '', minimap2$rname)), minimap2[,c('qname', 'rname', 'flag', 'mapq', 'cigar')])
     taxa.contigs     <- unique(merge(minimap2.contigs[,c("taxid", "qname", "mapq", 'cigar')], db.uni.data[,..cols], by='taxid'))
     
-  } else if (db == 'all_NCBI_genomes') {
+  } else if (db %in% c('all_NCBI_genomes', 'GTDB_SSU')) {
     
     cols <- c('seqnames', 'taxid', ranks)
-    minimap2.contigs <- minimap2[,c('qname', 'rname', 'flag', 'mapq', 'cigar')]
-    db.uni.sub       <- db.uni.data[,..cols]
-    if (!data.table::haskey(db.uni.sub)) setkeyv(db.uni.sub, 'seqnames')
-    minimap2.taxa    <- db.uni.sub[minimap2.contigs, on=.(seqnames = rname), nomatch=0]
-    setnames(minimap2.taxa, 'seqnames', 'rname')
-    taxa.contigs     <- unique(minimap2.taxa, by=c( "qname", "mapq","taxid", ranks))
     
-  } else {stop('db must be one of the following: ProGenomes; rrnDB; EMUdb or mouse.toy !')}
+    missing.cols <- setdiff(cols, colnames(db.uni.data))
+    if (length(missing.cols) > 0) {
+      stop("The database table is missing required column(s): ",
+           paste(missing.cols, collapse = ", "), call. = FALSE)
+    }
+    
+    minimap2.contigs <- minimap2[, c('qname', 'rname', 'flag', 'mapq', 'cigar')]
+    
+    # For GTDB FASTA headers:
+    # BAM/SAM rname should normally already be RS_GCF_xxx or GB_GCA_xxx,
+    # but this makes the code robust if whitespace-containing headers leak through.
+    minimap2.contigs[, rname := sub("\\s.*$", "", rname)]
+    
+    db.uni.sub <- db.uni.data[, ..cols]
+    if (!data.table::haskey(db.uni.sub)) setkeyv(db.uni.sub, 'seqnames')
+    
+    minimap2.taxa <- db.uni.sub[minimap2.contigs, on = .(seqnames = rname), nomatch = 0]
+    setnames(minimap2.taxa, 'seqnames', 'rname')
+    
+    taxa.contigs <- unique(minimap2.taxa, by = c("qname", "mapq", "taxid", ranks))
+    
+  } else {
+    
+    stop('db must be one of the supported databases: proGcontigs_2, proGcontigs_3.host, proGcontigs_3.repres, rrnDB, mouse.toy, EMUdb, all_NCBI_genomes, GTDB_SSU', call. = FALSE)
+    
+  }
   
   rank.df <- data.frame(rank=ranks, rank.level=c(1:length(ranks)))
   #colnames(rank.df)[2] <- 'min.rank'
