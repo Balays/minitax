@@ -12,11 +12,11 @@ The default parameters settings are as follows:
 Platform	Match Score	Mismatch Score	Insertion Score	Deletion Score	Gap Opening Penalty	Gap Extension Penalty	Description
 Illumina	2	-4	-3	-3	-4	-2	*Optimized for high-accuracy, short reads. Higher penalties for mismatches and indels to reflect the platformâ€™s low error rate.*
 ONT	1	-3	-2	-2	-2	-1	*Adjusted for longer reads with higher error rates. More lenient penalties to accommodate frequent indels and mismatches.*
-PacBio	2	-3	-3	-3	-3	-2	*Balanced settings for long, high-fidelity reads (e.g., HiFi mode). Moderate penalties for indels to support accurate alignment in repetitive regions.*
+PacBio	2	-3	-3	-3	-2	*Balanced settings for long, high-fidelity reads (e.g., HiFi mode). Moderate penalties for indels to support accurate alignment in repetitive regions.*
 ```
 ### Databases
 Minitax supports a variety of databases, including a comprehensive genome collection from NCBI (approximately 16,000 genomes) for WGS reads,
-and EMUdb  (https://gitlab.com/treangenlab/emu) or SILVA (https://www.arb-silva.de/) for 16S gene sequencing data.
+and EMUdb  (https://gitlab.com/treangenlab/emu), SILVA (https://www.arb-silva.de/), or GTDB SSU references for 16S gene sequencing data.
 
 ### Post-alignment processing
 The alignment data is imported into R using Rsamtools and merged with database information using data.table for computational efficiency, a design that supports the processing of large datasets.
@@ -62,7 +62,7 @@ The configuration file is tab-separated file, and should contain the follwing in
 ```
 argument	value	step	description
 platform	ONT	both	Either: 'Illumina', 'PacBio' or 'ONT'
-db	'all_NCBI_genomes'	both	options: 'all_NCBI_genomes' or 'EMUdb'
+db	all_NCBI_genomes	both	options: all_NCBI_genomes, EMUdb, GTDB_SSU, or a generic db_data.tsv database
 db.dir	/mnt/d/data/databases/all_NCBI_genomes	both	absolute path of database home directory
 project	project	optional	project identifier
 ...
@@ -153,6 +153,121 @@ mm2_ref	all_NCBI_genomes.fna.gz
 mapper_backend	auto
 mm2_index_batch	128G
 ```
+
+## Building and using a GTDB SSU database
+
+`GTDB_SSU` is intended for full-length or near-full-length 16S rRNA gene reads,
+for example ONT V1-V9 or PacBio HiFi 16S. It uses GTDB genome accessions as the
+reference sequence identifiers and the official GTDB lineage as the taxonomy.
+This makes it useful when you want taxonomy that is consistent with GTDB-Tk and
+MAG/genome-based downstream analyses.
+
+A runnable GTDB SSU database directory should contain:
+```
+gtdb_ssu_reps.fna              # FASTA used by minimap2
+gtdb_ssu_reps.idx              # minimap2 index
+gtdb_ssu_taxonomy.tsv          # two columns: seqnames, GTDB lineage
+```
+
+The taxonomy table must be tab-separated and have no header:
+```
+RS_GCF_031457235.1	d__Bacteria;p__Pseudomonadota;c__Gammaproteobacteria;o__Pseudomonadales;f__Pseudomonadaceae;g__Pseudomonas_E;s__Pseudomonas_E example
+GB_GCA_963842765.1	d__Bacteria;p__Bacillota_A;c__Clostridia;o__Lachnospirales;f__Lachnospiraceae;g__Anaerobutyricum;s__Anaerobutyricum hallii
+```
+
+The FASTA header should start with the same accession used in the first column
+of `gtdb_ssu_taxonomy.tsv`. Extra text after the first whitespace is allowed,
+because minimap2/BAM reference names normally retain only the first token:
+```
+>RS_GCF_031457235.1 d__Bacteria;p__Pseudomonadota;...
+ACGT...
+```
+
+### Build the FASTA and taxonomy table from GTDB files
+
+Download the bacterial and archaeal representative SSU files and taxonomy tables
+from a GTDB release directory. Example:
+```
+mkdir -p /mnt/d/data/databases/GTDB_SSU
+cd /mnt/d/data/databases/GTDB_SSU
+
+wget https://data.gtdb.ecogenomic.org/releases/latest/genomic_files_reps/bac120_ssu_reps.fna.gz
+wget https://data.gtdb.ecogenomic.org/releases/latest/genomic_files_reps/ar53_ssu_reps.fna.gz
+wget https://data.gtdb.ecogenomic.org/releases/latest/bac120_taxonomy.tsv.gz
+wget https://data.gtdb.ecogenomic.org/releases/latest/ar53_taxonomy.tsv.gz
+
+zcat bac120_ssu_reps.fna.gz ar53_ssu_reps.fna.gz > gtdb_ssu_reps.raw.fna
+zcat bac120_taxonomy.tsv.gz ar53_taxonomy.tsv.gz > gtdb_ssu_taxonomy.tsv
+```
+
+For full-length V1-V9 reads, it is recommended to remove very short SSU
+references before indexing. GTDB SSU FASTA files can contain partial SSU hits,
+and short references may attract partial high-identity alignments.
+```
+seqkit seq -m 1200 gtdb_ssu_reps.raw.fna > gtdb_ssu_reps.fna
+```
+
+Build the minimap2 index with a large index batch size so MAPQ remains reliable:
+```
+minimap2 -x map-ont -I 128G -d gtdb_ssu_reps.idx gtdb_ssu_reps.fna
+```
+
+### GTDB SSU config example
+
+```
+argument	value	step	description
+platform	ONT	both	Long-read full-length 16S
+Vregion	V1V9	both	Full-length 16S rRNA gene
+db	GTDB_SSU	both	GTDB representative SSU database
+db.dir	/mnt/d/data/databases/GTDB_SSU	both	Directory containing GTDB SSU files
+project	project_GTDB_SSU	both	Project label
+nproc	24	both	Threads
+mm2_ref	gtdb_ssu_reps.fna	map	Reference FASTA inside db.dir
+mm2_index	gtdb_ssu_reps.idx	map	minimap2 index inside db.dir
+mm2_index_batch	128G	map	Avoid multi-part minimap2 indexes
+mapper_backend	auto	map	Use Parabricks if available, otherwise mm2-fast/minimap2
+mm2_path	mm2-fast	map	CPU mapper command
+mapq.filt	NA	classify	Do not remove MAPQ values by default
+best.mapq	TRUE	classify	Keep highest MAPQ alignments per read
+keep.max.cigar	TRUE	classify	Refine tied hits by CIGAR score
+methods	BestAln	classify	Taxonomic assignment method
+```
+
+Then run:
+```
+./minitax_validate.sh minitax_config_GTDB_SSU.txt
+./minitax.sh minitax_config_GTDB_SSU.txt
+./minitax.complete.R minitax_config_GTDB_SSU.txt
+```
+
+### GTDB SSU sanity checks
+
+Before running all samples, check that the FASTA identifiers and taxonomy table
+identifiers match:
+```
+grep '^>' gtdb_ssu_reps.fna | head
+head gtdb_ssu_taxonomy.tsv
+```
+
+After mapping one sample, inspect the BAM reference names:
+```
+samtools view outdir/bam/sample.bam | head | cut -f3
+```
+
+The names should look like GTDB genome accessions, for example:
+```
+RS_GCF_031457235.1
+GB_GCA_963842765.1
+```
+
+Confirm that those names occur in the taxonomy table:
+```
+samtools view outdir/bam/sample.bam | head -1000 | cut -f3 | sort -u | head > test_rnames.txt
+cut -f1 gtdb_ssu_taxonomy.tsv | grep -Fxf test_rnames.txt | head
+```
+
+If this returns accessions, minitax should be able to join alignments to GTDB
+taxonomy.
 
 ## Mapper backend: mm2-fast or Parabricks
 
