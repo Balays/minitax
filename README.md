@@ -12,7 +12,7 @@ The default parameters settings are as follows:
 Platform	Match Score	Mismatch Score	Insertion Score	Deletion Score	Gap Opening Penalty	Gap Extension Penalty	Description
 Illumina	2	-4	-3	-3	-4	-2	*Optimized for high-accuracy, short reads. Higher penalties for mismatches and indels to reflect the platformâ€™s low error rate.*
 ONT	1	-3	-2	-2	-2	-1	*Adjusted for longer reads with higher error rates. More lenient penalties to accommodate frequent indels and mismatches.*
-PacBio	2	-3	-3	-3	-2	*Balanced settings for long, high-fidelity reads (e.g., HiFi mode). Moderate penalties for indels to support accurate alignment in repetitive regions.*
+PacBio	2	-3	-3	-3	-3	-2	*Balanced settings for long, high-fidelity reads (e.g., HiFi mode). Moderate penalties for indels to support accurate alignment in repetitive regions.*
 ```
 ### Databases
 Minitax supports a variety of databases, including a comprehensive genome collection from NCBI (approximately 16,000 genomes) for WGS reads,
@@ -45,16 +45,67 @@ mamba env create \
 # 3. Activate it
 mamba activate /home/mdbio/mamba/envs/minitax-mm2fast
 
-# 3. Install zlib for mm2-fast
+# 4. Install zlib for mm2-fast
 mamba install -c conda-forge zlib libzlib
 
-# 4. Make scripts executable, useful after Windows/WSL checkouts
-chmod +x minitax.sh minitax_validate.sh scripts/*.sh
+# 5. Make scripts executable, useful after Windows/WSL checkouts
+chmod +x minitax.sh minitax.complete.R minitax_validate.sh scripts/*.sh
 
-# 5. Build and install mm2-fast into this env
+# 6. Build and install mm2-fast into this env
 bash scripts/install_mm2_fast_into_env.sh \
   --env-prefix "$CONDA_PREFIX"
 ```
+
+### Making minitax available from PATH
+
+The recommended approach is to create command symlinks inside the active conda
+or mamba environment. This keeps minitax tied to the environment containing its
+R packages, minimap2/mm2-fast, and other dependencies.
+
+Run these commands from the cloned minitax repository after activating the
+environment:
+```
+# activate the environment first
+mamba activate minitax-mm2fast
+
+# from inside the minitax repository
+chmod +x minitax.sh minitax.complete.R minitax_validate.sh scripts/*.sh
+
+ln -sfn "$(pwd)/minitax.sh" "$CONDA_PREFIX/bin/minitax"
+ln -sfn "$(pwd)/minitax.complete.R" "$CONDA_PREFIX/bin/minitax-complete"
+ln -sfn "$(pwd)/minitax_validate.sh" "$CONDA_PREFIX/bin/minitax-validate"
+```
+
+After this, the commands can be run from any directory while the environment is
+active:
+```
+minitax-validate minitax_config.txt
+minitax minitax_config.txt
+minitax-complete minitax_config.txt
+```
+
+Check that the commands are found from `PATH`:
+```
+which minitax
+which minitax-complete
+which minitax-validate
+```
+
+Alternative: add the cloned repository itself to `PATH`. This exposes the
+original script names (`minitax.sh`, `minitax.complete.R`, and
+`minitax_validate.sh`) rather than the shorter command aliases above.
+```
+echo 'export PATH="/mnt/c/GitHub/minitax:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+
+which minitax.sh
+which minitax.complete.R
+which minitax_validate.sh
+```
+
+For reproducible use on shared systems, prefer the conda-environment symlinks.
+They avoid depending on shell startup files and are active only when the minitax
+environment is active.
 
 
 ## Configuration file
