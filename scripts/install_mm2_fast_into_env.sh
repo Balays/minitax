@@ -57,6 +57,15 @@ done
 [[ -n "$ENV_PREFIX" ]] || { usage; fail "--env-prefix is required when CONDA_PREFIX is unset."; }
 [[ -d "$ENV_PREFIX/bin" ]] || fail "Environment bin directory not found: $ENV_PREFIX/bin"
 
+# Make conda-provided headers/libraries visible to compilers that do not
+# automatically search the active environment. This is required for zlib.h when
+# building mm2-fast with conda compilers on some Linux/WSL systems.
+[[ -f "$ENV_PREFIX/include/zlib.h" ]] || fail "zlib.h not found in $ENV_PREFIX/include. Install zlib/libzlib in this environment."
+export CPATH="$ENV_PREFIX/include${CPATH:+:$CPATH}"
+export LIBRARY_PATH="$ENV_PREFIX/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+export LD_LIBRARY_PATH="$ENV_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PKG_CONFIG_PATH="$ENV_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+
 if [[ -z "$SOURCE" ]]; then
   command -v git >/dev/null 2>&1 || fail "git not found. Install git in the active environment."
   command -v make >/dev/null 2>&1 || fail "make not found. Install make in the active environment."
