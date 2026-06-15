@@ -15,6 +15,7 @@ dependencies:
   - gzip
   - minimap2
   - samtools
+  - taxonkit
   - zlib
   - libzlib
   - r-base=4.4
