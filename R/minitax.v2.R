@@ -47,7 +47,7 @@ minitax2 <- function(minimap2, db='proGcontigs', db.data=prog.db, db.uni.data=NU
     minimap2.contigs <- data.table(taxid=as.numeric(gsub(':.*', '', minimap2$rname)), minimap2[,c('qname', 'rname', 'flag', 'mapq', 'cigar')])
     taxa.contigs     <- unique(merge(minimap2.contigs[,c("taxid", "qname", "mapq", 'cigar')], db.uni.data[,..cols], by='taxid'))
     
-  } else if (db %in% c('all_NCBI_genomes', 'GTDB_SSU')) {
+  } else if (db %in% c('all_NCBI_genomes', 'GTDB_SSU', 'ncbi_refseq_16S')) {
     
     cols <- c('seqnames', 'taxid', ranks)
     
@@ -59,8 +59,7 @@ minitax2 <- function(minimap2, db='proGcontigs', db.data=prog.db, db.uni.data=NU
     
     minimap2.contigs <- minimap2[, c('qname', 'rname', 'flag', 'mapq', 'cigar')]
     
-    # For GTDB FASTA headers:
-    # BAM/SAM rname should normally already be RS_GCF_xxx or GB_GCA_xxx,
+    # BAM/SAM rname should normally already be the first FASTA-header token
     # but this makes the code robust if whitespace-containing headers leak through.
     minimap2.contigs[, rname := sub("\\s.*$", "", rname)]
     
@@ -74,7 +73,7 @@ minitax2 <- function(minimap2, db='proGcontigs', db.data=prog.db, db.uni.data=NU
     
   } else {
     
-    stop('db must be one of the supported databases: proGcontigs_2, proGcontigs_3.host, proGcontigs_3.repres, rrnDB, mouse.toy, EMUdb, all_NCBI_genomes, GTDB_SSU', call. = FALSE)
+    stop('db must be one of the supported databases: proGcontigs_2, proGcontigs_3.host, proGcontigs_3.repres, rrnDB, mouse.toy, EMUdb, all_NCBI_genomes, GTDB_SSU, ncbi_refseq_16S', call. = FALSE)
     
   }
   
@@ -113,4 +112,3 @@ minitax2 <- function(minimap2, db='proGcontigs', db.data=prog.db, db.uni.data=NU
   #saveRDS(max_cigar_score, paste0(file, ".rds"))
   return(taxa)
 }
-
