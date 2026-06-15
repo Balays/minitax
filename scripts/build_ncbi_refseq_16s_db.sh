@@ -37,7 +37,7 @@ Example:
     --threads 20
 
 Use in minitax_config.txt:
-  db         all_NCBI_genomes
+  db         ncbi_refseq_16S
   db.dir     /path/to/ncbi_targeted_loci_16s
   mm2_ref    ncbi_refseq_16s.fna.gz
   mm2_index  ncbi_refseq_16s.idx
@@ -176,7 +176,7 @@ else
 fi
 
 echo "Done. Use this in minitax_config.txt:"
-echo -e "  db\tall_NCBI_genomes"
+echo -e "  db\tncbi_refseq_16S"
 echo -e "  db.dir\t$OUTDIR"
 echo -e "  mm2_ref\tncbi_refseq_16s.fna.gz"
 echo -e "  mm2_index\tncbi_refseq_16s.idx"
