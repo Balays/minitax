@@ -12,6 +12,7 @@ TargetedLoci Bacteria/Archaea files:
   NCBI.db.tsv
   NCBI.db.uni.tsv
   NCBI.db.uni.spec.tsv
+  db_data.tsv
   NCBI_16S_seqlengths.txt
   metadata/ncbi_refseq_16s_accession_taxid.tsv
 
@@ -25,8 +26,8 @@ Options:
                             For full-length V1-V9, 1200 is often useful.
   --threads N               Threads for pigz/minimap2 indexing. Default: 4
   --index-batch-size SIZE   minimap2 -I batch size. Default: 128G
-  --rscript PATH            Rscript path. Default: command -v Rscript
   --minimap2 PATH           minimap2 path. Default: command -v minimap2
+  --taxonkit PATH           taxonkit path. Default: command -v taxonkit
   --skip-index              Do not build the minimap2 index.
   --force                   Rebuild combined FASTA and tables from downloaded files.
   -h, --help                Show this help.
@@ -74,8 +75,8 @@ KINGDOMS="Bacteria,Archaea"
 MIN_LENGTH=0
 THREADS=4
 INDEX_BATCH_SIZE="128G"
-RSCRIPT_BIN="${RSCRIPT:-}"
 MINIMAP2_BIN="${MINIMAP2:-}"
+TAXONKIT_BIN="${TAXONKIT:-}"
 SKIP_INDEX=0
 FORCE=0
 
@@ -86,8 +87,8 @@ while [[ $# -gt 0 ]]; do
     --min-length) MIN_LENGTH="${2:-}"; shift 2 ;;
     --threads) THREADS="${2:-}"; shift 2 ;;
     --index-batch-size) INDEX_BATCH_SIZE="${2:-}"; shift 2 ;;
-    --rscript) RSCRIPT_BIN="${2:-}"; shift 2 ;;
     --minimap2) MINIMAP2_BIN="${2:-}"; shift 2 ;;
+    --taxonkit) TAXONKIT_BIN="${2:-}"; shift 2 ;;
     --skip-index) SKIP_INDEX=1; shift ;;
     --force) FORCE=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -101,13 +102,13 @@ done
 [[ "$INDEX_BATCH_SIZE" =~ ^[0-9]+[KkMmGgTt]?$ ]] || fail "--index-batch-size must look like 128G, 64000M, or 500000000."
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MAKE_DB_R="${SCRIPT_DIR}/make_ncbi_refseq_16s_db.R"
-[[ -f "$MAKE_DB_R" ]] || fail "Cannot find helper script: $MAKE_DB_R"
 
-if [[ -z "$RSCRIPT_BIN" ]]; then
-  RSCRIPT_BIN="$(command -v Rscript || true)"
+if [[ -z "$TAXONKIT_BIN" ]]; then
+  TAXONKIT_BIN="$(command -v taxonkit || true)"
+elif [[ "$TAXONKIT_BIN" != */* ]]; then
+  TAXONKIT_BIN="$(command -v "$TAXONKIT_BIN" || true)"
 fi
-[[ -n "$RSCRIPT_BIN" && -x "$RSCRIPT_BIN" ]] || fail "Rscript not found. Activate an R environment or pass --rscript PATH."
+[[ -n "$TAXONKIT_BIN" && -x "$TAXONKIT_BIN" ]] || fail "taxonkit not found. Install with: mamba install -c bioconda -c conda-forge taxonkit"
 
 if [[ "$SKIP_INDEX" -eq 0 && -z "$MINIMAP2_BIN" ]]; then
   MINIMAP2_BIN="$(command -v minimap2 || true)"
@@ -126,16 +127,18 @@ FASTA_GZ="${FILTERED_FASTA}.gz"
 SEQLENGTHS="${OUTDIR}/NCBI_16S_seqlengths.txt"
 TAXDUMP="${OUTDIR}/taxdump/taxdump.tar.gz"
 ACCESSION_TAXID="${OUTDIR}/metadata/ncbi_refseq_16s_accession_taxid.tsv"
-GBFF_LIST="${OUTDIR}/metadata/gbff_files.txt"
+ACCESSION_TAXID_RAW="${OUTDIR}/metadata/ncbi_refseq_16s_accession_taxid.raw.tsv"
+TAXIDS="${OUTDIR}/metadata/ncbi_refseq_16s.taxids.txt"
+LINEAGES="${OUTDIR}/metadata/ncbi_refseq_16s.taxid_lineages.tsv"
 
 if [[ "$FORCE" -eq 1 ]]; then
-  rm -f "$RAW_FASTA" "$FILTERED_FASTA" "$FASTA_GZ" "$SEQLENGTHS" "$ACCESSION_TAXID" "$GBFF_LIST" \
+  rm -f "$RAW_FASTA" "$FILTERED_FASTA" "$FASTA_GZ" "$SEQLENGTHS" "$ACCESSION_TAXID" "$ACCESSION_TAXID_RAW" "$TAXIDS" "$LINEAGES" \
         "${OUTDIR}/NCBI.db.tsv" "${OUTDIR}/NCBI.db.uni.tsv" "${OUTDIR}/NCBI.db.uni.spec.tsv" \
-        "${OUTDIR}/ncbi_refseq_16s.idx"
+        "${OUTDIR}/db_data.tsv" "${OUTDIR}/ncbi_refseq_16s.idx"
 fi
 
 : > "$RAW_FASTA"
-: > "$GBFF_LIST"
+printf 'seqnames\taccession\ttaxid\torganism_name\n' > "$ACCESSION_TAXID_RAW"
 
 while read -r kingdom; do
   [[ -n "$kingdom" ]] || continue
@@ -145,11 +148,36 @@ while read -r kingdom; do
   base_url="https://ftp.ncbi.nlm.nih.gov/refseq/TargetedLoci/${kingdom}"
   download_file "${base_url}/${fna}" "${OUTDIR}/downloads/${fna}"
   download_file "${base_url}/${gbff}" "${OUTDIR}/downloads/${gbff}"
-  echo "${OUTDIR}/downloads/${gbff}" >> "$GBFF_LIST"
   gzip -cd "${OUTDIR}/downloads/${fna}" >> "$RAW_FASTA"
+
+  gzip -cd "${OUTDIR}/downloads/${gbff}" | awk -v OFS='\t' '
+    function flush_record() {
+      if (seqname != "" && taxid != "") print seqname, accession, taxid, organism
+    }
+    /^LOCUS/ {
+      flush_record()
+      seqname=""; accession=""; taxid=""; organism=""; in_source=0
+      next
+    }
+    /^ACCESSION[ ]+/ {
+      accession=$0; sub(/^ACCESSION[ ]+/, "", accession); split(accession, a, /[ \t]/); accession=a[1]; next
+    }
+    /^VERSION[ ]+/ {
+      version=$0; sub(/^VERSION[ ]+/, "", version); split(version, v, /[ \t]/); seqname=v[1]; next
+    }
+    /^  ORGANISM[ ]+/ {
+      organism=$0; sub(/^  ORGANISM[ ]+/, "", organism); gsub(/^[ \t]+|[ \t]+$/, "", organism); next
+    }
+    /^     source[ ]+/ { in_source=1; next }
+    /^     [A-Za-z_]+[ ]+/ && $0 !~ /^     source[ ]+/ { in_source=0 }
+    in_source && /\/db_xref="taxon:[0-9]+"/ {
+      taxid=$0; sub(/^.*taxon:/, "", taxid); sub(/".*$/, "", taxid); next
+    }
+    /^\/\// { flush_record(); seqname=""; accession=""; taxid=""; organism=""; in_source=0 }
+    END { flush_record() }
+  ' >> "$ACCESSION_TAXID_RAW"
 done < <(csv_to_lines "$KINGDOMS")
 
-# Normalize FASTA headers to first token only, and optionally length-filter.
 awk -v min_len="$MIN_LENGTH" -v seq_lengths="$SEQLENGTHS" '
   function flush_record() {
     if (name != "") {
@@ -163,7 +191,7 @@ awk -v min_len="$MIN_LENGTH" -v seq_lengths="$SEQLENGTHS" '
     nseq = 0
     len = 0
   }
-  BEGIN { OFS = "\t"; print "seqnames\tseqlengths" > seq_lengths }
+  BEGIN { print "seqnames\tseqlengths" > seq_lengths }
   /^>/ {
     flush_record()
     header = $0
@@ -183,22 +211,53 @@ awk -v min_len="$MIN_LENGTH" -v seq_lengths="$SEQLENGTHS" '
   END { flush_record() }
 ' "$RAW_FASTA" > "$FILTERED_FASTA"
 
+awk -F '\t' -v OFS='\t' '
+  NR == FNR { if (NR > 1) keep[$1] = 1; next }
+  FNR == 1 { print; next }
+  $1 in keep
+' "$SEQLENGTHS" "$ACCESSION_TAXID_RAW" > "$ACCESSION_TAXID"
+
+cut -f3 "$ACCESSION_TAXID" | tail -n +2 | sort -u > "$TAXIDS"
+[[ -s "$TAXIDS" ]] || fail "No TaxIDs could be parsed from the GBFF files."
+
+download_file "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdump.tar.gz" "$TAXDUMP"
+tar -xzf "$TAXDUMP" -C "${OUTDIR}/taxdump" names.dmp nodes.dmp merged.dmp
+
+"$TAXONKIT_BIN" lineage --data-dir "${OUTDIR}/taxdump" "$TAXIDS" \
+  | "$TAXONKIT_BIN" reformat --data-dir "${OUTDIR}/taxdump" -F -f '{k}\t{p}\t{c}\t{o}\t{f}\t{g}\t{s}' \
+  | awk -F '\t' -v OFS='\t' 'BEGIN {print "taxid","lineage","superkingdom","phylum","class","order","family","genus","species"} {print $1,$2,$3,$4,$5,$6,$7,$8,$9}' \
+  > "$LINEAGES"
+
+awk -F '\t' -v OFS='\t' '
+  NR == FNR {
+    if (FNR > 1) lin[$1] = $3 OFS $4 OFS $5 OFS $6 OFS $7 OFS $8 OFS $9
+    next
+  }
+  FNR == 1 { print "seqnames","ident","taxid","superkingdom","phylum","class","order","family","genus","species"; next }
+  {
+    seq=$1; tax=$3; org=$4
+    if (tax in lin) print seq, seq, tax, lin[tax]
+    else print seq, seq, tax, "", "", "", "", "", "", org
+  }
+' "$LINEAGES" "$ACCESSION_TAXID" > "${OUTDIR}/NCBI.db.tsv"
+
+awk -F '\t' -v OFS='\t' '
+  NR == 1 {print "seqnames","taxid","superkingdom","phylum","class","order","family","genus","species"; next}
+  {print $1,$3,$4,$5,$6,$7,$8,$9,$10}
+' "${OUTDIR}/NCBI.db.tsv" | sort -t $'\t' -u > "${OUTDIR}/NCBI.db.uni.tsv"
+
+awk -F '\t' -v OFS='\t' '
+  NR == 1 {print "superkingdom","phylum","class","order","family","genus","species"; next}
+  {print $4,$5,$6,$7,$8,$9,$10}
+' "${OUTDIR}/NCBI.db.tsv" | sort -t $'\t' -u > "${OUTDIR}/NCBI.db.uni.spec.tsv"
+
+cp "${OUTDIR}/NCBI.db.uni.tsv" "${OUTDIR}/db_data.tsv"
+
 if have pigz; then
   pigz -f -p "$THREADS" "$FILTERED_FASTA"
 else
   gzip -f "$FILTERED_FASTA"
 fi
-
-# Taxdump is always downloaded because it is small enough and ensures current lineage names.
-download_file "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdump.tar.gz" "$TAXDUMP"
-tar -xzf "$TAXDUMP" -C "${OUTDIR}/taxdump" names.dmp nodes.dmp merged.dmp
-
-"$RSCRIPT_BIN" "$MAKE_DB_R" \
-  --gbff-list "$GBFF_LIST" \
-  --fasta "$FASTA_GZ" \
-  --seq-lengths "$SEQLENGTHS" \
-  --taxdump-dir "${OUTDIR}/taxdump" \
-  --outdir "$OUTDIR"
 
 cat > "${OUTDIR}/build_manifest.tsv" <<EOF
 key	value
