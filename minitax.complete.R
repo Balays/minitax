@@ -6,14 +6,9 @@ if (length(args) != 1) {
   stop("Usage: minitax.complete.R <config.tsv>", call. = FALSE)
 }
 config.file <- args[1]
-#### ####
-##
 
 version <- 0.9
-
 message("Welcome to", "\t", "𝑚ＩＮＩＴΛΧ", " !", "\n", "minitax, version: ", version)
-
-
 message(
 "
 ╔═════════════════════════════════╗
@@ -25,9 +20,7 @@ message(
 ╚═════════════════════════════════╝
 ")
 
-
-#### Load packages quietely #####
-
+#### Load packages quietly ####
 suppressMessages(suppressWarnings(library(Rsamtools)))
 suppressMessages(suppressWarnings(library(readr)))
 suppressMessages(suppressWarnings(library(ggplot2)))
@@ -46,26 +39,22 @@ if (HAS_PHYLOSEQ) {
   message("phyloseq is not installed; phyloseq .rds outputs will be skipped.")
 }
 
-#### ####
-
-
-#### ####
-#config <- 'minitax_config_allNCBI.txt'   ##  -->> this is for debugging
+#### Read config ####
 config <- read.delim(config.file, stringsAsFactors = FALSE)
-#print(config[,c(1:2)])
-
-config <- config[,c(1:2)] %>% spread(argument, value)
+config <- config[, c(1:2)] %>% spread(argument, value)
 t(config)
 
-script.path <- sub("^--file=", "", commandArgs(FALSE)[grep("^--file=", commandArgs(FALSE))][1])
-script.dir <- if (!is.na(script.path) && nzchar(script.path)) {
-  dirname(normalizePath(script.path, mustWork = FALSE))
-} else {
+resolve_script_dir <- function() {
+  script.path <- sub("^--file=", "", commandArgs(FALSE)[grep("^--file=", commandArgs(FALSE))][1])
+  if (!is.na(script.path) && nzchar(script.path)) {
+    return(dirname(normalizePath(script.path, mustWork = FALSE)))
+  }
   getwd()
 }
+script.dir <- resolve_script_dir()
 
 is_config_na <- function(value) {
-  length(value) == 0 || is.na(value) || !nzchar(trimws(value)) || toupper(trimws(value)) == "NA"
+  length(value) == 0 || is.na(value) || !nzchar(trimws(value)) || toupper(trimws(value)) %in% c("NA", "NULL")
 }
 
 set_config_default <- function(name, default) {
@@ -117,29 +106,23 @@ set_config_default("reuse.taxa.cache", "TRUE")
 set_config_default("dt.threads", "1")
 set_config_default("CIGAR_points", "match_score = 1; mismatch_score = -3; insertion_score = -2; deletion_score = -2; gap_opening_penalty = -2; gap_extension_penalty = -1")
 
-nproc <- as.integer(config$nproc) #args[2] #32 #
+nproc <- as.integer(config$nproc)
 if (is.na(nproc) || nproc < 1) {
   stop("Config argument nproc must be a positive integer.", call. = FALSE)
 }
-#### ####
-#stop()
 
-#### Convert paths, according to OS #####
+#### Convert paths on Windows ####
 convert_path <- function(path) {
-  gsub("^/mnt/([a-zA-Z])/","\\U\\1:/", path, perl = TRUE)
+  gsub("^/mnt/([a-zA-Z])/", "\\U\\1:/", path, perl = TRUE)
 }
-
 if (Sys.info()[["sysname"]] == 'Windows') {
   for (path.arg in intersect(c("minitax.dir", "misc.dir", "db.dir"), names(config))) {
     config[[path.arg]] <- convert_path(config[[path.arg]])
   }
 }
-#### ####
-##
 
-#### functions ####
-## minitax
-minitax.dir <- config$minitax.dir ## 'my.R.packages/minitax'
+#### Source functions ####
+minitax.dir <- config$minitax.dir
 source_required <- function(base.dir, rel.path) {
   path <- file.path(base.dir, rel.path)
   if (!file.exists(path)) {
@@ -151,50 +134,35 @@ source_required <- function(base.dir, rel.path) {
 source_required(minitax.dir, 'R/minitax.v2.R')
 source_required(minitax.dir, 'R/cigar_score.R')
 source_required(minitax.dir, 'R/cigar_to_length.R')
-#source(paste0( minitax.dir, '/R/PS_from_taxa.sum.R'))
-#source(paste0( minitax.dir, '/R/minitax.R'))
-#source(paste0( minitax.dir, '/R/tax.identity.ranks.R'))
-#source(paste0( minitax.dir, '/R/make.krona.out.R'))
-#source(paste0( minitax.dir, '/R/estimate.species.R'))
-#source(paste0( minitax.dir, '/R/import.bam.R'))
 source_required(minitax.dir, 'R/cigar.sum.R')
-#source(paste0( minitax.dir, '/R/get_chunks.R'))
-#source(paste0( minitax.dir, '/R/taxprofile.from.minitax.R'))
 source_required(minitax.dir, 'R/rename_duptaxa.R')
 source_required(minitax.dir, 'R/minitax.wrapfun.complete.R')
 source_required(minitax.dir, 'R/BestAln.R')
 source_required(minitax.dir, 'R/add_lineage.R')
 
-## misc package
-misc.dir <- config$misc.dir ## 'my.R.packages/Rlyeh-main'
+misc.dir <- config$misc.dir
 source_required(misc.dir, 'R/ov.from.bam2.R')
-#source(paste0( misc.dir, '/R/ov.from.bam3.R'))
 source_required(misc.dir, 'R/dt.from.bam.R')
 source_required(misc.dir, 'R/get.best.aln.R')
 source_required(misc.dir, 'R/misc.functions.R')
 source_required(misc.dir, 'R/add_rightmost_non.NA_col.R')
 source_required(misc.dir, 'R/paste_columns_dt.R')
 bam.flags <- read.delim(file.path(misc.dir, 'R/bam.flags.tsv'))
-#### ####
-##
-
 
 #### Project options ####
-db        <- config$db ##'proGcontigs'
-db.dir    <- config$db.dir ## paste0(path.prefix, 'data/databases/proGenomes')
-project   <- config$project ## 'MCM'
-Vregion   <- config$Vregion ## 'v1_2'
-platform  <- config$platform ##'illumina'
+db        <- config$db
+db.dir    <- config$db.dir
+project   <- config$project
+Vregion   <- config$Vregion
+platform  <- config$platform
 default.outdir <- paste('minitax', project, platform, Vregion, db, sep = '_')
 outdir    <- if (is_config_na(config$outdir)) default.outdir else config$outdir
-#outdir <- paste0(outdir, '.partII')
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
 outdir.label <- basename(gsub("[/\\\\]+$", "", outdir))
 if (is_config_na(outdir.label)) outdir.label <- "minitax"
 method_result_path <- function(methods, suffix) {
   file.path(outdir, paste0(outdir.label, "_", methods, suffix))
 }
-
 
 bam.all.out      <- paste0(outdir, '/', 'bam.all.tsv')
 bamstats.all.out <- paste0(outdir, '/', 'bamstats.tsv')
@@ -203,192 +171,120 @@ taxa.prog.out    <- paste0(outdir, '/', 'taxa.tsv')
 taxa.comp.out    <- paste0(outdir, '/', 'all.reads.tsv')
 tax.abund.out    <- paste0(outdir, '/', 'tax.abund.tsv')
 spec.est.all.out <- paste0(outdir, '/', 'species.estimates.tsv')
-#### ####
-##
 
 #### Database import ####
-if (db == 'proGcontigs_2') {
-  prog.db <- fread(paste0(db.dir, '/proGenomes2.1_specI_lineageNCBI.tab'), header = F)
-  colnames(prog.db) <- c("genome", "superkingdom", "phylum", "class", "order", "family", "genus", "species")
-  prog.db <- data.frame(taxid=gsub('\\..*', '', prog.db$genome  ), prog.db)
-  ranks <- c("superkingdom", "phylum", "class", "order", "family", "genus", "species")
-  prog.db$taxid <- as.integer(prog.db$taxid)
-
-  prog.db[,ranks]  <- as.data.frame(apply(prog.db[,ranks], 2, function(x) str_replace(as.character(unlist(x)),  pattern = "^\\d+\\s", replacement = "")))
-
-  prog.gt <- gather(prog.db, rank, taxon, -c(1:2))
-  prog.db.spec.uni <- data.table(unique.data.frame(prog.db[,ranks]))
-
-  db.data <- data.table(prog.db)
-  db.name <- db #'proGcontigs_2'
-
-  prog.db.uni     <- db.data %>% distinct(across(all_of(c('taxid', ranks)))) #unique.data.frame(db.data[,c('taxid', ranks)])
-  db.uni.data     <- data.table(prog.db.uni)
-
-} else if (db == 'EMUdb') {
-
-  ranks <- c("superkingdom", "phylum", "class", "order", "family", "genus", "species")
-  emu.db    <- read.delim(paste0(db.dir, '/taxonomy.tsv'))
-  colnames(emu.db)[1] <- 'taxid'
-  emu.db <- emu.db[,c('taxid', ranks)]
-  emu.db[emu.db == ''] <- NA
-
-  emu.fasta <- seqinr::read.fasta(paste0(db.dir, '/species_taxid.fasta'), whole.header = T)
-  emu.fasta <- data.frame(names=names(emu.fasta), taxid=gsub(':.*', '', names(emu.fasta)))
-  emu.fasta$seq_id <- gsub(' \\[.*', '', emu.fasta$names)
-
-  emu.idx    <- merge(emu.fasta, emu.db, by='taxid')
-
-  db.data <- data.table(emu.db)
-  db.name <- db #'EMUdb'
-  db.uni.data <- db.data
-
-} else if (db == 'rrn') {
-  NULL
-} else if (db=='proGcontigs_3.host' | db=='proGcontigs_3.repres') {
-
-  prog.db <- fread(paste0(db.dir, '/progenomes3.db.tsv'), header = T)
-  ranks   <- c("superkingdom", "phylum", "class", "order", "family", "genus", "species")
-  colnames(prog.db)[7:13] <- ranks
-  #c("superkingdom", "phylum", "class", "order", "family", "genus", "species")
-  #prog.db <- data.frame(taxid=gsub('\\..*', '', prog.db$genome  ), prog.db)
-  #prog.db$taxid <- as.integer(prog.db$taxid)
-  #prog.gt <- gather(prog.db, rank, taxon, -c(1:2))
-  prog.db.spec.uni <- unique(prog.db[,..ranks])
-
-  db.data <- prog.db
-  db.name <- db
-
-  prog.db.uni     <- db.data %>% distinct(across(all_of(c('seqnames', ranks)))) #unique.data.frame(db.data[,c('taxid', ranks)])
-  db.uni.data     <- prog.db.uni
-
-} else if (db=="all_NCBI_genomes") {
-
+import_database <- function(db, db.dir) {
   ranks <- c("superkingdom", "phylum", "class", "order", "family", "genus", "species")
 
-  db.data     <- fread(paste0(db.dir, "/NCBI.db.tsv"), header = T)
-  db.uni.data <- fread(paste0(db.dir, "/NCBI.db.uni.tsv"), header = T)
-  ## we need taxid from db data!
-  db.uni.data <- db.data
-  db.name <- db
+  if (db == 'proGcontigs_2') {
+    prog.db <- fread(file.path(db.dir, 'proGenomes2.1_specI_lineageNCBI.tab'), header = FALSE)
+    colnames(prog.db) <- c("genome", ranks)
+    prog.db <- data.frame(taxid = gsub('\\..*', '', prog.db$genome), prog.db)
+    prog.db$taxid <- as.integer(prog.db$taxid)
+    prog.db[, ranks] <- as.data.frame(apply(prog.db[, ranks], 2, function(x) str_replace(as.character(unlist(x)), pattern = "^\\d+\\s", replacement = "")))
+    db.data <- data.table(prog.db)
+    db.uni.data <- data.table(db.data %>% distinct(across(all_of(c('taxid', ranks)))))
 
-} else if (db == "GTDB_SSU") {
-  
-  ranks <- c("superkingdom", "phylum", "class", "order", "family", "genus", "species")
-  
-  gtdb.tax.path <- file.path(db.dir, "gtdb_ssu_taxonomy.tsv")
-  
-  if (!file.exists(gtdb.tax.path)) {
-    stop("GTDB_SSU database selected, but taxonomy file was not found: ",
-         gtdb.tax.path, call. = FALSE)
+  } else if (db == 'EMUdb') {
+    emu.db <- read.delim(file.path(db.dir, 'taxonomy.tsv'))
+    colnames(emu.db)[1] <- 'taxid'
+    emu.db <- emu.db[, c('taxid', ranks)]
+    emu.db[emu.db == ''] <- NA
+    db.data <- data.table(emu.db)
+    db.uni.data <- db.data
+
+  } else if (db == 'rrn') {
+    db.data <- data.table()
+    db.uni.data <- data.table()
+
+  } else if (db %in% c('proGcontigs_3.host', 'proGcontigs_3.repres')) {
+    prog.db <- fread(file.path(db.dir, 'progenomes3.db.tsv'), header = TRUE)
+    colnames(prog.db)[7:13] <- ranks
+    db.data <- prog.db
+    db.uni.data <- data.table(db.data %>% distinct(across(all_of(c('seqnames', ranks)))))
+
+  } else if (db == 'all_NCBI_genomes') {
+    db.data <- fread(file.path(db.dir, 'NCBI.db.tsv'), header = TRUE, na.strings = c('', 'NA'))
+    db.uni.data <- db.data
+
+  } else if (db == 'ncbi_refseq_16S') {
+    db.path <- file.path(db.dir, 'NCBI.db.tsv')
+    db.uni.path <- file.path(db.dir, 'NCBI.db.uni.tsv')
+    if (!file.exists(db.path)) stop("ncbi_refseq_16S database selected, but file was not found: ", db.path, call. = FALSE)
+    if (!file.exists(db.uni.path)) stop("ncbi_refseq_16S database selected, but file was not found: ", db.uni.path, call. = FALSE)
+    db.data <- fread(db.path, header = TRUE, na.strings = c('', 'NA'))
+    db.uni.data <- fread(db.uni.path, header = TRUE, na.strings = c('', 'NA'))
+    required.cols <- c('seqnames', 'taxid', ranks)
+    missing.cols <- setdiff(required.cols, colnames(db.uni.data))
+    if (length(missing.cols) > 0) {
+      stop("ncbi_refseq_16S database table is missing required column(s): ", paste(missing.cols, collapse = ', '), call. = FALSE)
+    }
+    setkeyv(db.uni.data, 'seqnames')
+
+  } else if (db == 'GTDB_SSU') {
+    gtdb.tax.path <- file.path(db.dir, 'gtdb_ssu_taxonomy.tsv')
+    if (!file.exists(gtdb.tax.path)) {
+      stop("GTDB_SSU database selected, but taxonomy file was not found: ", gtdb.tax.path, call. = FALSE)
+    }
+    gtdb.tax <- fread(gtdb.tax.path, header = FALSE, sep = '\t', col.names = c('seqnames', 'lineage_raw'), na.strings = c('', 'NA'))
+    lineage_split <- tstrsplit(gtdb.tax$lineage_raw, ';', fixed = TRUE)
+    if (length(lineage_split) < length(ranks)) {
+      stop("GTDB lineage has fewer than ", length(ranks), " ranks in ", gtdb.tax.path, call. = FALSE)
+    }
+    for (i in seq_along(ranks)) gtdb.tax[, (ranks[i]) := lineage_split[[i]]]
+    for (r in ranks) {
+      gtdb.tax[, (r) := sub('^[a-z]__', '', get(r))]
+      gtdb.tax[get(r) == '', (r) := NA_character_]
+    }
+    gtdb.tax[, taxid := seqnames]
+    db.data <- gtdb.tax[, c('seqnames', 'taxid', ranks), with = FALSE]
+    db.uni.data <- unique(db.data)
+    setkeyv(db.uni.data, 'seqnames')
+
+  } else {
+    db.data <- fread(file.path(db.dir, 'db_data.tsv'), header = TRUE, na.strings = '')
+    db.uni.data <- db.data
+    message('Using generic db_data.tsv database import for custom database: ', db)
+    try({ ranks <- unlist(strsplit(config$ranks, ', ')) })
+    if (!exists('ranks')) ranks <- setdiff(colnames(db.uni.data), c('seqnames', 'taxid'))
   }
-  
-  gtdb.tax <- fread(
-    gtdb.tax.path,
-    header = FALSE,
-    sep = "\t",
-    col.names = c("seqnames", "lineage_raw"),
-    na.strings = c("", "NA")
-  )
-  
-  # Split GTDB lineage:
-  # d__Bacteria;p__Bacteroidota;c__Bacteroidia;...
-  lineage_split <- tstrsplit(gtdb.tax$lineage_raw, ";", fixed = TRUE)
-  
-  if (length(lineage_split) < length(ranks)) {
-    stop("GTDB lineage has fewer than ", length(ranks), " ranks in ",
-         gtdb.tax.path, call. = FALSE)
+
+  if (is.data.table(db.uni.data)) {
+    if ('seqnames' %in% colnames(db.uni.data)) {
+      setkeyv(db.uni.data, 'seqnames')
+    } else if ('taxid' %in% colnames(db.uni.data)) {
+      setkeyv(db.uni.data, 'taxid')
+    }
   }
-  
-  for (i in seq_along(ranks)) {
-    gtdb.tax[, (ranks[i]) := lineage_split[[i]]]
-  }
-  
-  # Optional but recommended: remove GTDB rank prefixes d__, p__, c__, ...
-  for (r in ranks) {
-    gtdb.tax[, (r) := sub("^[a-z]__", "", get(r))]
-    gtdb.tax[get(r) == "", (r) := NA_character_]
-  }
-  
-  # taxid is not numeric here; use the GTDB genome accession as stable taxid-like ID
-  gtdb.tax[, taxid := seqnames]
-  
-  db.data <- gtdb.tax[, c("seqnames", "taxid", ranks), with = FALSE]
-  db.uni.data <- unique(db.data)
-  db.name <- db
-  
-  setkeyv(db.uni.data, "seqnames")
 
-} else {
-
-  db.data     <- fread(paste0(db.dir, "/db_data.tsv"), header = T, na.strings = '')
-  db.uni.data <- db.data
-  db.name     <- db
-
-  message('If another database was used, then there should be a "db_data.tsv" file present in the
-          database directory, containing the taxonomies (lineages) of the sequences of the databases (the header of the fasta files).
-          In this file, the two column names (first row) should be:',
-          'seqnames', 'taxid', '\n',
-          'That is, the first coulmn is the sequence identifers of the dabase fastafile,
-           the second is the identifier of the organism,
-           and the followings are the taxonomies.')
-
-  try({ ranks <- unlist(strsplit(config$ranks, ', ')) })
-  if (!exists('ranks')) { ranks <- colnames(db.uni.data)[-c(1)] }
-  # Identify the last entry of the ranks vector
-  last_rank <- tail(ranks, n = 1)
-
-  #c("superkingdom", "phylum", "class", "order", "family", "genus", "species")
-  cols  <- c('seqnames', ranks) ## 'taxid',
-
-
+  list(db.data = db.data, db.uni.data = db.uni.data, db.name = db, ranks = ranks)
 }
 
+db.import <- import_database(db, db.dir)
+db.data <- db.import$db.data
+db.uni.data <- db.import$db.uni.data
+db.name <- db.import$db.name
+ranks <- db.import$ranks
 
 message(db.name, ' database loaded')
-
 message('The following taxon levels will be used: ', paste0(ranks, collapse='; '))
 
-if (is.data.table(db.uni.data)) {
-  if ('seqnames' %in% colnames(db.uni.data)) {
-    setkeyv(db.uni.data, 'seqnames')
-  } else if ('taxid' %in% colnames(db.uni.data)) {
-    setkeyv(db.uni.data, 'taxid')
-  }
-}
-
-
-
-#### ####
-##
-
-
-#### Metadata and parent directory of bamfiles from minimap2 output ####
+#### Metadata and BAM files ####
 pardir    <- file.path(outdir, 'bam')
 pattern   <- '.bam'
 bamfiles  <- if (dir.exists(pardir)) {
-  grep('\\.bai$', list.files(pardir, pattern = pattern), value = T, invert = T)
+  grep('\\.bai$', list.files(pardir, pattern = pattern), value = TRUE, invert = TRUE)
 } else {
   character()
 }
-cached.taxa.files <- list.files(
-  file.path(outdir, 'best_alignments_w_taxa'),
-  '.*_best_alignments_w_taxa\\.tsv$',
-  full.names = TRUE
-)
-
+cached.taxa.files <- list.files(file.path(outdir, 'best_alignments_w_taxa'), '.*_best_alignments_w_taxa\\.tsv$', full.names = TRUE)
 if (length(bamfiles) == 0 && length(cached.taxa.files) == 0) {
   stop("No BAM files found in ", pardir, " and no cached best_alignments_w_taxa files found.", call. = FALSE)
 }
 
-### create results directories
+#### create results directories ####
 outputs <- split_config_values(config$outputs, default = 'bam.sum')
-for(resdir in outputs) {
-  dir.create(file.path(outdir, resdir), recursive = TRUE, showWarnings = FALSE)
-}
-
-## filter
-#bamfiles <- bamfiles[14]
+for (resdir in outputs) dir.create(file.path(outdir, resdir), recursive = TRUE, showWarnings = FALSE)
 
 if (length(bamfiles) > 0) {
   samples <- sub('\\.bam$', '', basename(bamfiles))
@@ -398,76 +294,62 @@ if (length(bamfiles) > 0) {
   metadata.bamfiles <- NA
 }
 
-#source('make.metadata.WGS.R')
-#metadata$db <- db
-
-metadata <- data.frame(sample=samples, bamfile=metadata.bamfiles,
-                       project=project,
-                       db=db,
-                       Vregion=Vregion,
-                       platform=platform,
-                       row.names = samples,
-                       workflow = 'minitax',
-                       mapq.filt =  config$mapq.filt
+metadata <- data.frame(
+  sample = samples,
+  bamfile = metadata.bamfiles,
+  project = project,
+  db = db,
+  Vregion = Vregion,
+  platform = platform,
+  row.names = samples,
+  workflow = 'minitax',
+  mapq.filt = config$mapq.filt
 )
+write_tsv(metadata, file.path(outdir, 'metadata.tsv'))
 
-write_tsv(metadata, paste0(outdir, "/metadata.tsv"))
-#metadata <- read.delim(paste0(outdir, "/metadata.tsv"))
-#### ####
-##
-
-
-#### Minitax settings
+#### Minitax settings ####
 keep.highest.mapq.aln.only <- parse_logical_config(config$keep.highest.mapq.aln.only, default = TRUE)
 crop.na.tax <- parse_logical_config(config$crop.na.tax, default = FALSE)
-mapq.filt   <- config$mapq.filt; if(!is_config_na(mapq.filt)) {
+mapq.filt <- config$mapq.filt
+if (!is_config_na(mapq.filt)) {
   mapq.start <- as.integer(gsub(':.*', '', config$mapq.filt))
   mapq.end <- as.integer(gsub('.*:', '', config$mapq.filt))
-  if (is.na(mapq.start) || is.na(mapq.end)) {
-    stop("mapq.filt must be NA, a single integer, or an integer range like 0:59.", call. = FALSE)
-  }
-  mapq.filt   <- mapq.start:mapq.end  # default: NA
+  if (is.na(mapq.start) || is.na(mapq.end)) stop("mapq.filt must be NA, a single integer, or an integer range like 0:59.", call. = FALSE)
+  mapq.filt <- mapq.start:mapq.end
 } else {
   mapq.filt <- NA
 }
 methods.to.use <- split_config_values(config$methods, default = 'BestAln')
-best.mapq      <- parse_logical_config(config$best.mapq, default = TRUE)
-multicore      <- parse_logical_config(config$multicore, default = TRUE)
-saveRAM        <- parse_logical_config(config$saveRAM, default = FALSE)
-reuse.taxa.cache <- parse_logical_config(config$reuse.taxa.cache, default = TRUE)
-dt.threads     <- as.integer(config$dt.threads)
-if (is.na(dt.threads) || dt.threads < 1) {
-  stop("Config argument dt.threads must be a positive integer.", call. = FALSE)
+methods.to.use[methods.to.use %in% c('SpecEst', 'SpecEstimate', 'SpeciesEst')] <- 'SpeciesEstimate'
+valid.methods <- c('BestAln', 'RandAln', 'LCA', 'SpeciesEstimate')
+unknown.methods <- setdiff(methods.to.use, valid.methods)
+if (length(unknown.methods) > 0) {
+  stop("Unknown method(s): ", paste(unknown.methods, collapse = ', '), ". Valid methods are: ", paste(valid.methods, collapse = ', '), call. = FALSE)
 }
+
+best.mapq <- parse_logical_config(config$best.mapq, default = TRUE)
+multicore <- parse_logical_config(config$multicore, default = TRUE)
+saveRAM <- parse_logical_config(config$saveRAM, default = FALSE)
+reuse.taxa.cache <- parse_logical_config(config$reuse.taxa.cache, default = TRUE)
+dt.threads <- as.integer(config$dt.threads)
+if (is.na(dt.threads) || dt.threads < 1) stop("Config argument dt.threads must be a positive integer.", call. = FALSE)
 data.table::setDTthreads(dt.threads)
 
 keep.max.cigar <- parse_logical_config(config$keep.max.cigar, default = TRUE)
-CIGAR_points   <- separate(data.frame(stringr::str_split_1(config$CIGAR_points, ';\\s*')), col = 1, into = c('key', 'value'), sep = '\\s*=\\s*')
+CIGAR_points <- separate(data.frame(stringr::str_split_1(config$CIGAR_points, ';\\s*')), col = 1, into = c('key', 'value'), sep = '\\s*=\\s*')
 CIGAR_points$value <- as.integer(CIGAR_points$value)
-if (any(is.na(CIGAR_points$value))) {
-  stop("CIGAR_points contains non-integer values.", call. = FALSE)
-}
+if (any(is.na(CIGAR_points$value))) stop("CIGAR_points contains non-integer values.", call. = FALSE)
 CIGAR_points <- CIGAR_points %>% spread(key, value)
 
 runtime.outputs <- outputs
-if (length(bamfiles) > 0 || length(methods.to.use) > 1) {
-  runtime.outputs <- unique(c(runtime.outputs, 'best_alignments_w_taxa'))
-}
-for (resdir in runtime.outputs) {
-  dir.create(file.path(outdir, resdir), recursive = TRUE, showWarnings = FALSE)
-}
+if (length(bamfiles) > 0 || length(methods.to.use) > 1) runtime.outputs <- unique(c(runtime.outputs, 'best_alignments_w_taxa'))
+for (resdir in runtime.outputs) dir.create(file.path(outdir, resdir), recursive = TRUE, showWarnings = FALSE)
 
-
-#### configs used
 message('Configs used: ')
 print(t(config))
-##
-
-####
 message('Constructed metadata:')
 print(metadata)
 
-#### Set up future to use multiple cores with future
 configure_minitax_plan <- function(task_count) {
   workers <- max(1L, min(nproc, max(1L, task_count)))
   if (!multicore) {
@@ -489,9 +371,7 @@ timing.records <- list()
 record_timing <- function(timing.dt) {
   if (is.null(timing.dt) || nrow(timing.dt) == 0) return(invisible(NULL))
   timing.records[[length(timing.records) + 1L]] <<- timing.dt
-  fwrite(rbindlist(timing.records, fill = TRUE),
-         file.path(outdir, 'classification_timing.tsv'),
-         sep = '\t', na = 'NA')
+  fwrite(rbindlist(timing.records, fill = TRUE), file.path(outdir, 'classification_timing.tsv'), sep = '\t', na = 'NA')
   invisible(NULL)
 }
 
@@ -499,7 +379,6 @@ write_method_outputs <- function(methods, taxa.sum) {
   setDT(taxa.sum)
   saveRDS(taxa.sum, method_result_path(methods, '_taxa.all.sum.rds'))
   fwrite(taxa.sum, method_result_path(methods, '_taxa.all.sum.tsv'), sep = '\t', na = 'NA')
-
   message('output of ', methods, ': ')
   print(head(taxa.sum))
 
@@ -511,30 +390,18 @@ write_method_outputs <- function(methods, taxa.sum) {
   ps <- NULL
   taxa.for.ps <- copy(taxa.sum)
   try({
-    if (methods == 'SpeciesEstimate') {
-      taxa.for.ps[, count := norm_count]
-    }
-
-    sample_data        <- metadata
+    if (methods == 'SpeciesEstimate') taxa.for.ps[, count := norm_count]
+    sample_data <- metadata
     sample_data$method <- methods
-
     taxa.for.ps <- taxa.for.ps[, c('tax.identity', 'lineage', ranks, 'sample', 'count'), with = FALSE]
     taxa.for.ps[is.na(tax.identity), c('tax.identity', 'lineage', ranks) := 'unclassified']
-
     otutab <- dcast.data.table(taxa.for.ps, lineage ~ sample, value.var = 'count', fill = 0)
     otutab <- data.frame(otutab[, -1, with = FALSE], row.names = otutab$lineage)
-
     taxtab <- data.frame(unique(taxa.for.ps[, c('lineage', ranks, 'tax.identity'), with = FALSE]))
     rownames(taxtab) <- taxtab$lineage
     taxtab <- taxtab[rownames(otutab), ]
-
-    ps <- phyloseq(otu_table(as.matrix(otutab), taxa_are_rows = TRUE),
-                   tax_table(as.matrix(taxtab)),
-                   sample_data(sample_data))
-
-    sample_names(ps) <- paste(sample_data(ps)$workflow, sample_data(ps)$db,
-                              sample_data(ps)$method, sample_names(ps), sep = '_')
-
+    ps <- phyloseq(otu_table(as.matrix(otutab), taxa_are_rows = TRUE), tax_table(as.matrix(taxtab)), sample_data(sample_data))
+    sample_names(ps) <- paste(sample_data(ps)$workflow, sample_data(ps)$db, sample_data(ps)$method, sample_names(ps), sep = '_')
     message('Generated phyloseq object: ')
     print(ps)
     saveRDS(ps, method_result_path(methods, '_PS.rds'))
@@ -545,9 +412,7 @@ write_method_outputs <- function(methods, taxa.sum) {
 
 run_minitax_method <- function(methods, taxa.files) {
   message('\n \n ', methods, ' method started, on: ', date())
-  message('Running ', methods, ' from cached tax-annotated alignments: \n',
-          paste(taxa.files, collapse = '\n'))
-
+  message('Running ', methods, ' from cached tax-annotated alignments: \n', paste(taxa.files, collapse = '\n'))
   configure_minitax_plan(length(taxa.files))
   method.results <- future_lapply(
     taxa.files,
@@ -567,10 +432,8 @@ run_minitax_method <- function(methods, taxa.files) {
     dt.threads = dt.threads,
     future.seed = TRUE
   )
-
   record_timing(rbindlist(lapply(method.results, `[[`, 'timing'), fill = TRUE))
   taxa.sum <- rbindlist(lapply(method.results, `[[`, 'taxa.sum'), fill = TRUE)
-
   if (methods == 'LCA') {
     taxa.sum <- rename_duptaxa(taxa.sum, ranks = ranks)
   } else if (methods == 'SpeciesEstimate') {
@@ -579,7 +442,6 @@ run_minitax_method <- function(methods, taxa.files) {
     taxa.sum[is.na(tax.identity), tax.identity := 'unclassified']
     taxa.sum[, lineage := tax.identity]
   }
-
   write_method_outputs(methods, taxa.sum)
   if (saveRAM) {
     rm(method.results, taxa.sum)
@@ -589,16 +451,12 @@ run_minitax_method <- function(methods, taxa.files) {
   invisible(NULL)
 }
 
-####
 message('everything is ready! Starting minitax!')
 
-#### RUN MINITAX ON ALIGNMENTS ####
 taxa.files <- character()
 if (length(bamfiles) > 0) {
   bam.paths <- file.path(pardir, bamfiles)
-  message('Preparing reusable best_alignments_w_taxa cache from BAM files: \n',
-          paste(bam.paths, collapse = '\n'))
-
+  message('Preparing reusable best_alignments_w_taxa cache from BAM files: \n', paste(bam.paths, collapse = '\n'))
   configure_minitax_plan(length(bam.paths))
   cache.results <- future_lapply(
     bam.paths,
@@ -618,7 +476,6 @@ if (length(bamfiles) > 0) {
     dt.threads = dt.threads,
     future.seed = TRUE
   )
-
   record_timing(rbindlist(lapply(cache.results, `[[`, 'timing'), fill = TRUE))
   taxa.files <- vapply(cache.results, `[[`, character(1), 'cache_file')
   if (saveRAM) {
@@ -631,22 +488,12 @@ if (length(bamfiles) > 0) {
 }
 
 taxa.files <- taxa.files[file.exists(taxa.files)]
-if (length(taxa.files) == 0) {
-  stop("No best_alignments_w_taxa cache files are available for summarisation.", call. = FALSE)
-}
+if (length(taxa.files) == 0) stop("No best_alignments_w_taxa cache files are available for summarisation.", call. = FALSE)
 
-for (methods in methods.to.use) {
-  run_minitax_method(methods, taxa.files)
-}
+for (methods in methods.to.use) run_minitax_method(methods, taxa.files)
 
 if (length(timing.records) > 0) {
-  fwrite(rbindlist(timing.records, fill = TRUE),
-         file.path(outdir, 'classification_timing.tsv'),
-         sep = '\t', na = 'NA')
+  fwrite(rbindlist(timing.records, fill = TRUE), file.path(outdir, 'classification_timing.tsv'), sep = '\t', na = 'NA')
   message('Classification timing written to: ', file.path(outdir, 'classification_timing.tsv'))
 }
-
 future::plan(future::sequential)
-#### ####
-
-##############################
