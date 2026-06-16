@@ -103,18 +103,22 @@ if [[ "$FORCE" -eq 1 ]]; then
         "${OUTDIR}/NCBI.db.tsv" "${OUTDIR}/NCBI.db.uni.tsv" "${OUTDIR}/NCBI.db.uni.spec.tsv" "${OUTDIR}/db_data.tsv" "${OUTDIR}/ncbi_refseq_16s.idx"
 fi
 : > "$RAW_FASTA"
-printf 'seqnames\taccession\ttaxid\torganism_name\n' > "$ACCESSION_TAXID_RAW"
+printf 'seqnames\taccession\ttaxid\tsuperkingdom\torganism_name\n' > "$ACCESSION_TAXID_RAW"
 
 while read -r kingdom; do
   [[ -n "$kingdom" ]] || continue
+  case "$kingdom" in
+    Bacteria|Archaea) ;;
+    *) fail "Unsupported TargetedLoci kingdom for 16S builder: $kingdom. Expected Bacteria or Archaea." ;;
+  esac
   kingdom_lc="$(printf '%s' "$kingdom" | tr '[:upper:]' '[:lower:]')"
   fna="${kingdom_lc}.16SrRNA.fna.gz"; gbff="${kingdom_lc}.16SrRNA.gbff.gz"
   base_url="https://ftp.ncbi.nlm.nih.gov/refseq/TargetedLoci/${kingdom}"
   download_file "${base_url}/${fna}" "${OUTDIR}/downloads/${fna}"
   download_file "${base_url}/${gbff}" "${OUTDIR}/downloads/${gbff}"
   gzip -cd "${OUTDIR}/downloads/${fna}" >> "$RAW_FASTA"
-  gzip -cd "${OUTDIR}/downloads/${gbff}" | awk -v OFS='\t' '
-    function flush_record(){ if(seqname!="" && taxid!="") print seqname, accession, taxid, organism }
+  gzip -cd "${OUTDIR}/downloads/${gbff}" | awk -v OFS='\t' -v superkingdom="$kingdom" '
+    function flush_record(){ if(seqname!="" && taxid!="") print seqname, accession, taxid, superkingdom, organism }
     /^LOCUS/ { flush_record(); seqname=""; accession=""; taxid=""; organism=""; in_source=0; next }
     /^ACCESSION[ ]+/ { accession=$0; sub(/^ACCESSION[ ]+/,"",accession); split(accession,a,/[ \t]/); accession=a[1]; next }
     /^VERSION[ ]+/ { version=$0; sub(/^VERSION[ ]+/,"",version); split(version,v,/[ \t]/); seqname=v[1]; next }
@@ -142,10 +146,21 @@ cut -f3 "$ACCESSION_TAXID" | tail -n +2 | sort -u > "$TAXIDS"
 download_file "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdump.tar.gz" "$TAXDUMP"
 tar -xzf "$TAXDUMP" -C "${OUTDIR}/taxdump" names.dmp nodes.dmp merged.dmp
 "$TAXONKIT_BIN" lineage --data-dir "${OUTDIR}/taxdump" "$TAXIDS" \
-  | "$TAXONKIT_BIN" reformat --data-dir "${OUTDIR}/taxdump" -F -f '{k}\t{p}\t{c}\t{o}\t{f}\t{g}\t{s}' \
-  | awk -F '\t' -v OFS='\t' 'BEGIN{print "taxid","lineage","superkingdom","phylum","class","order","family","genus","species"} {print $1,$2,$3,$4,$5,$6,$7,$8,$9}' > "$LINEAGES"
+  | "$TAXONKIT_BIN" reformat --data-dir "${OUTDIR}/taxdump" -F -f '{p}\t{c}\t{o}\t{f}\t{g}\t{s}' \
+  | awk -F '\t' -v OFS='\t' 'BEGIN{print "taxid","lineage","phylum","class","order","family","genus","species"} {print $1,$2,$3,$4,$5,$6,$7,$8}' > "$LINEAGES"
 
-awk -F '\t' -v OFS='\t' 'NR==FNR{if(FNR>1) lin[$1]=$3 OFS $4 OFS $5 OFS $6 OFS $7 OFS $8 OFS $9; next} FNR==1{print "seqnames","ident","taxid","superkingdom","phylum","class","order","family","genus","species"; next} {seq=$1; tax=$3; org=$4; if(tax in lin) print seq,seq,tax,lin[tax]; else print seq,seq,tax,"","","","","","",org}' "$LINEAGES" "$ACCESSION_TAXID" > "${OUTDIR}/NCBI.db.tsv"
+awk -F '\t' -v OFS='\t' '
+  NR==FNR {
+    if (FNR > 1) lin[$1] = $3 OFS $4 OFS $5 OFS $6 OFS $7 OFS $8
+    next
+  }
+  FNR==1 {print "seqnames","ident","taxid","superkingdom","phylum","class","order","family","genus","species"; next}
+  {
+    seq=$1; tax=$3; superkingdom=$4; org=$5
+    if (tax in lin) print seq,seq,tax,superkingdom,lin[tax]
+    else print seq,seq,tax,superkingdom,"","","","","",org
+  }
+' "$LINEAGES" "$ACCESSION_TAXID" > "${OUTDIR}/NCBI.db.tsv"
 
 awk -F '\t' -v OFS='\t' 'NR==1{next} {print $1,$3,$4,$5,$6,$7,$8,$9,$10}' "${OUTDIR}/NCBI.db.tsv" | sort -t $'\t' -u > "${OUTDIR}/NCBI.db.uni.tsv.tmp"
 { printf 'seqnames\ttaxid\tsuperkingdom\tphylum\tclass\torder\tfamily\tgenus\tspecies\n'; cat "${OUTDIR}/NCBI.db.uni.tsv.tmp"; } > "${OUTDIR}/NCBI.db.uni.tsv"
