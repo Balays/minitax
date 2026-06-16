@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
+set -uo pipefail
 
 usage() {
   cat <<'EOF'
@@ -33,8 +33,8 @@ resolve_script_dir() {
   local source="${BASH_SOURCE[0]}"
   while [[ -L "$source" ]]; do
     local dir
-    dir="$(cd -P "$(dirname "$source")" >/dev/null 2>&1 && pwd)"
-    source="$(readlink "$source")"
+    dir="$(cd -P "$(dirname "$source")" >/dev/null 2>&1 && pwd)" || fail "Could not resolve script directory."
+    source="$(readlink "$source")" || fail "Could not read symlink: ${BASH_SOURCE[0]}"
     [[ "$source" != /* ]] && source="$dir/$source"
   done
   cd -P "$(dirname "$source")" >/dev/null 2>&1 && pwd
@@ -60,7 +60,7 @@ normalize_path() {
   path="$(strip_quotes "${1:-}")"
   if is_na "$path"; then
     printf '%s' ""
-    return
+    return 0
   fi
   path="${path//\\//}"
   if [[ "$path" =~ ^([A-Za-z]):/(.*)$ ]]; then
@@ -90,13 +90,19 @@ cfg() {
   local key="$1"
   local default="${2:-}"
   local value="${config[$key]:-$default}"
-  if is_na "$value"; then printf '%s' "$default"; else printf '%s' "$value"; fi
+  if is_na "$value"; then
+    printf '%s' "$default"
+  else
+    printf '%s' "$value"
+  fi
 }
 
 require_cfg() {
   local key="$1"
   local value="${config[$key]:-}"
-  is_na "$value" && fail "Missing required config value: $key"
+  if is_na "$value"; then
+    fail "Missing required config value: $key"
+  fi
 }
 
 safe_name() {
@@ -139,19 +145,24 @@ done
 [[ -f "$CONFIG_FILE" ]] || fail "Configuration file not found: $CONFIG_FILE"
 
 script_dir="$(resolve_script_dir)"
+info "minitax mapper: ${script_dir}/minitax.sh"
+info "Config: $CONFIG_FILE"
 
 if [[ "$RUN_VALIDATE" -eq 1 ]]; then
   validator="${script_dir}/minitax_validate.sh"
   if [[ -x "$validator" ]]; then
     echo "Validating mapping config..."
-    "$validator" "$CONFIG_FILE" --step map
+    bash "$validator" "$CONFIG_FILE" --step map || fail "Config validation failed."
+    info "Validation passed; starting mapping setup."
   else
     warn "minitax_validate.sh is not executable or not found at ${validator}; continuing without preflight validation."
   fi
+else
+  info "Skipping preflight validation because --no-validate was requested."
 fi
 
 declare -A config
-while IFS=$'\t' read -r argument value step description extra; do
+while IFS=$'\t' read -r argument value step description extra || [[ -n "${argument:-}" ]]; do
   argument="${argument//$'\r'/}"
   value="${value//$'\r'/}"
   if [[ "$argument" == "argument" || -z "$argument" || "$argument" == \#* ]]; then
@@ -205,12 +216,14 @@ fi
 
 default_outdir="minitax_${project}_${platform}_${vregion}_${db}"
 outdir="$(normalize_path "$(cfg outdir "")")"
-is_na "$outdir" && outdir="$default_outdir"
+if is_na "$outdir"; then
+  outdir="$default_outdir"
+fi
 
 bamoutdir="${outdir}/bam"
 logdir="${outdir}/logs"
 tmpdir="${outdir}/tmp"
-mkdir -p "$bamoutdir" "$logdir" "$tmpdir"
+mkdir -p "$bamoutdir" "$logdir" "$tmpdir" || fail "Could not create output directories under: $outdir"
 
 index="${db_dir}/${mm2_index}"
 mm2_ref_path=""
@@ -241,7 +254,7 @@ if [[ ! -s "$index" ]]; then
         --threads "$nproc" \
         --index-batch-size "$mm2_index_batch" \
         --minimap2 "$mm2_bin" \
-        --force
+        --force || fail "Failed to build minimap2 index."
     fi
   else
     fail "minimap2 index not found: $index. Set mm2_ref to a FASTA if you want the mapper to build it."
@@ -249,7 +262,7 @@ if [[ ! -s "$index" ]]; then
 fi
 
 manifest="${outdir}/mapping_manifest.tsv"
-printf 'sample\tplatform\tpreset\tread1\tread2\tbam\tstatus\tlog\tstarted\tended\n' > "$manifest"
+printf 'sample\tplatform\tpreset\tread1\tread2\tbam\tstatus\tlog\tstarted\tended\n' > "$manifest" || fail "Could not write mapping manifest: $manifest"
 
 shopt -s nullglob
 
@@ -279,7 +292,9 @@ plan_single_reads() {
 }
 
 plan_illumina_paired() {
-  is_na "$pair_pattern" && pair_pattern=""
+  if is_na "$pair_pattern"; then
+    pair_pattern=""
+  fi
   local r1_suffix="${pair_pattern}_R1${suffix}"
   local r2_suffix="${pair_pattern}_R2${suffix}"
   local r1_files=("$indir"/*"$r1_suffix")
@@ -325,9 +340,9 @@ if [[ "$debug" == "TRUE" || "$debug" == "T" || "$debug" == "true" ]]; then
   for i in "${!planned_samples[@]}"; do info "  ${planned_samples[$i]}: ${planned_read1[$i]} ${planned_read2[$i]}"; done
 fi
 
-db_dir_abs="$(abs_dir "$db_dir")"
-indir_abs="$(abs_dir "$indir")"
-tmpdir_abs="$(abs_dir "$tmpdir")"
+db_dir_abs="$(abs_dir "$db_dir")" || fail "Could not resolve absolute db.dir: $db_dir"
+indir_abs="$(abs_dir "$indir")" || fail "Could not resolve absolute input directory: $indir"
+tmpdir_abs="$(abs_dir "$tmpdir")" || fail "Could not resolve absolute tmp directory: $tmpdir"
 
 parabricks_available=0
 if [[ "$mapper_backend" == "auto" || "$mapper_backend" == "parabricks" ]]; then
@@ -397,24 +412,23 @@ map_sample() {
 
   info "Mapping sample '$sample' with preset '$preset' using backend '$sample_backend'..."
   info "  log: $log"
-  set +e
   (
-    set -Eeuo pipefail
+    set -uo pipefail
     echo "sample: $sample"
     echo "started: $started"
     echo "backend: $sample_backend"
     echo "preset: $preset"
     echo "index: $index"
-    [[ -n "$mm2_ref_path" ]] && echo "ref: $mm2_ref_path"
+    if [[ -n "$mm2_ref_path" ]]; then echo "ref: $mm2_ref_path"; fi
     echo "read1: $read1"
-    [[ -n "$read2" ]] && echo "read2: $read2"
+    if [[ -n "$read2" ]]; then echo "read2: $read2"; fi
     echo "bam: $outbam"
     echo
 
     if [[ "$sample_backend" == "parabricks" ]]; then
       declare -a pb_cmd pb_extra
       pb_cmd=(docker run --rm --gpus "$parabricks_num_gpus" --volume "${db_dir_abs}:/db:ro" --volume "${indir_abs}:/reads:ro" --volume "${tmpdir_abs}:/tmpdir" --workdir /tmpdir "$parabricks_image" pbrun minimap2 --ref "/db/${mm2_ref_rel}" --index "/db/${mm2_index}" --in-fq "/reads/$(basename "$read1")" --out-bam "/tmpdir/$(basename "$tmpbam")" --preset "$preset" --num-threads "$nproc" --num-gpus "$parabricks_num_gpus" --tmp-dir /tmpdir)
-      [[ -n "$read2" ]] && pb_cmd+=("/reads/$(basename "$read2")")
+      if [[ -n "$read2" ]]; then pb_cmd+=("/reads/$(basename "$read2")"); fi
       if [[ -n "$parabricks_extra_flags" ]]; then read -r -a pb_extra <<< "$parabricks_extra_flags"; pb_cmd+=("${pb_extra[@]}"); fi
       printf 'command:'; printf ' %q' "${pb_cmd[@]}"; printf '\n\n'
       "${pb_cmd[@]}"
@@ -432,7 +446,6 @@ map_sample() {
     "$samtools_bin" index -@ "$nproc" "$tmpbam"
   ) > "$log" 2>&1
   status=$?
-  set -e
   ended="$(date -Is)"
 
   if [[ "$status" -eq 0 ]]; then
@@ -466,7 +479,7 @@ info "Mapping summary"
 info "  planned: ${#planned_samples[@]}"
 info "  mapped:  ${#mapped[@]}"
 info "  skipped: ${#skipped[@]}"
-[[ "$DRY_RUN" -eq 1 ]] && info "  dry-run: ${#dry_planned[@]}"
+if [[ "$DRY_RUN" -eq 1 ]]; then info "  dry-run: ${#dry_planned[@]}"; fi
 info "  failed:  ${#failed[@]}"
 info "  manifest: $manifest"
 
