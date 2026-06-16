@@ -82,6 +82,7 @@ normalize_config_path <- function(path) {
   }
   path
 }
+escape_regex <- function(x) gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", x)
 
 script_path <- sub("^--file=", "", commandArgs(FALSE)[grep("^--file=", commandArgs(FALSE))][1])
 script_dir <- if (!is.na(script_path) && nzchar(script_path)) dirname(normalizePath(script_path, mustWork = FALSE)) else file.path(getwd(), "scripts")
@@ -206,7 +207,6 @@ check_executable <- function(path, label, required = TRUE) {
 check_package <- function(pkg, optional = FALSE) {
   if (requireNamespace(pkg, quietly = TRUE)) ok("R package installed: " %+% pkg) else if (optional) warn("Optional R package not installed: " %+% pkg) else err("Required R package not installed: " %+% pkg)
 }
-escape_regex <- function(x) gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", x)
 list_fastq <- function(indir, suffix) {
   if (!dir.exists(indir)) return(character())
   files <- list.files(indir, full.names = FALSE, no.. = TRUE)
@@ -321,9 +321,13 @@ check_database <- function() {
   db_dir <- normalize_config_path(get_cfg("db.dir"))
   file_readable(db_dir, "Database directory", required = TRUE)
   if (!dir.exists(db_dir)) return(invisible(FALSE))
+
   if (db == "all_NCBI_genomes") {
     required_files <- c("NCBI.db.tsv", "NCBI.db.uni.tsv", "NCBI.db.genomesize.tsv")
     optional_files <- c("NCBI.db.uni.spec.tsv", "NCBI_genome_collection_seqlengths.txt")
+  } else if (db == "ncbi_refseq_16S") {
+    required_files <- c("NCBI.db.tsv", "NCBI.db.uni.tsv", "db_data.tsv", "ncbi_refseq_16s.fna.gz")
+    optional_files <- c("NCBI.db.uni.spec.tsv", "NCBI_16S_seqlengths.txt", file.path("metadata", "ncbi_refseq_16s_accession_taxid.tsv"))
   } else if (db == "EMUdb") {
     required_files <- c("taxonomy.tsv", "species_taxid.fasta")
     optional_files <- character()
@@ -335,8 +339,10 @@ check_database <- function() {
     optional_files <- character()
     warn("Unknown/custom database type '" %+% db %+% "'. Expecting generic db_data.tsv.")
   }
+
   for (file in required_files) file_readable(file.path(db_dir, file), "Database file " %+% file, required = TRUE)
   for (file in optional_files) file_readable(file.path(db_dir, file), "Optional database file " %+% file, required = FALSE)
+
   index <- get_cfg("mm2_index")
   if (!is_config_na(index)) {
     index_path <- file.path(db_dir, index)
