@@ -6,17 +6,18 @@ usage() {
 Map reads for minitax with minimap2 and samtools.
 
 Usage:
+  minitax CONFIG [options]
   ./minitax.sh CONFIG [options]
 
 Options:
   --force        Recreate BAM files even when BAM + BAI already exist.
   --dry-run      Validate and print planned mappings without running minimap2.
-  --no-validate  Skip ./minitax_validate.sh --step map.
+  --no-validate  Skip minitax_validate.sh --step map.
   -h, --help     Show this help.
 
 The config format is the existing minitax tab-separated config file.
 Optional mapper config keys:
-  mapper_backend        auto, mm2-fast, minimap2, or parabricks. Default: auto.
+  mapper_backend        auto, mm2-fast, minimap2, cpu, or parabricks. Default: auto.
   parabricks_image      Docker image for Parabricks. Default: nvcr.io/nvidia/clara/clara-parabricks:4.7.0-1
   parabricks_num_gpus   GPU count passed to Docker/Parabricks. Default: 1
   parabricks_extra_flags
@@ -24,17 +25,19 @@ Optional mapper config keys:
 EOF
 }
 
-fail() {
-  echo "ERROR: $*" >&2
-  exit 1
-}
+fail() { echo "ERROR: $*" >&2; exit 1; }
+warn() { echo "WARNING: $*" >&2; }
+info() { echo "$*" >&2; }
 
-warn() {
-  echo "WARNING: $*" >&2
-}
-
-info() {
-  echo "$*" >&2
+resolve_script_dir() {
+  local source="${BASH_SOURCE[0]}"
+  while [[ -L "$source" ]]; do
+    local dir
+    dir="$(cd -P "$(dirname "$source")" >/dev/null 2>&1 && pwd)"
+    source="$(readlink "$source")"
+    [[ "$source" != /* ]] && source="$dir/$source"
+  done
+  cd -P "$(dirname "$source")" >/dev/null 2>&1 && pwd
 }
 
 is_na() {
@@ -87,19 +90,13 @@ cfg() {
   local key="$1"
   local default="${2:-}"
   local value="${config[$key]:-$default}"
-  if is_na "$value"; then
-    printf '%s' "$default"
-  else
-    printf '%s' "$value"
-  fi
+  if is_na "$value"; then printf '%s' "$default"; else printf '%s' "$value"; fi
 }
 
 require_cfg() {
   local key="$1"
   local value="${config[$key]:-}"
-  if is_na "$value"; then
-    fail "Missing required config value: $key"
-  fi
+  is_na "$value" && fail "Missing required config value: $key"
 }
 
 safe_name() {
@@ -108,16 +105,8 @@ safe_name() {
   printf '%s' "$value"
 }
 
-abs_dir() {
-  local dir="$1"
-  (cd "$dir" && pwd -P)
-}
-
-is_under_dir() {
-  local child="$1"
-  local parent="$2"
-  [[ "$child" == "$parent" || "$child" == "$parent"/* ]]
-}
+abs_dir() { (cd "$1" && pwd -P); }
+is_under_dir() { [[ "$1" == "$2" || "$1" == "$2"/* ]]; }
 
 parabricks_supports_preset() {
   case "$1" in
@@ -139,9 +128,7 @@ while [[ $# -gt 0 ]]; do
     -h|--help) usage; exit 0 ;;
     --*) fail "Unknown option: $1" ;;
     *)
-      if [[ -n "$CONFIG_FILE" ]]; then
-        fail "Unexpected argument: $1"
-      fi
+      [[ -z "$CONFIG_FILE" ]] || fail "Unexpected argument: $1"
       CONFIG_FILE="$1"
       shift
       ;;
@@ -151,13 +138,16 @@ done
 [[ -n "$CONFIG_FILE" ]] || { usage; fail "CONFIG is required."; }
 [[ -f "$CONFIG_FILE" ]] || fail "Configuration file not found: $CONFIG_FILE"
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script_dir="$(resolve_script_dir)"
 
-if [[ "$RUN_VALIDATE" -eq 1 && -x "${script_dir}/minitax_validate.sh" ]]; then
-  echo "Validating mapping config..."
-  "${script_dir}/minitax_validate.sh" "$CONFIG_FILE" --step map
-elif [[ "$RUN_VALIDATE" -eq 1 ]]; then
-  warn "minitax_validate.sh is not executable; continuing without preflight validation."
+if [[ "$RUN_VALIDATE" -eq 1 ]]; then
+  validator="${script_dir}/minitax_validate.sh"
+  if [[ -x "$validator" ]]; then
+    echo "Validating mapping config..."
+    "$validator" "$CONFIG_FILE" --step map
+  else
+    warn "minitax_validate.sh is not executable or not found at ${validator}; continuing without preflight validation."
+  fi
 fi
 
 declare -A config
@@ -170,9 +160,7 @@ while IFS=$'\t' read -r argument value step description extra; do
   config["$argument"]="$value"
 done < "$CONFIG_FILE"
 
-for key in platform db db.dir indir fastq_suffix mm2_index Nsec nproc; do
-  require_cfg "$key"
-done
+for key in platform db db.dir indir fastq_suffix mm2_index Nsec nproc; do require_cfg "$key"; done
 
 platform="$(cfg platform)"
 db="$(strip_quotes "$(cfg db)")"
@@ -211,14 +199,13 @@ if [[ "$mapper_backend" != "parabricks" ]]; then
 elif [[ -n "$mm2_path_value" ]]; then
   mm2_bin="$(resolve_command "$mm2_path_value" "minimap2")"
 fi
+
 [[ -d "$indir" ]] || fail "FASTQ input directory not found: $indir"
 [[ -d "$db_dir" ]] || fail "Database directory not found: $db_dir"
 
 default_outdir="minitax_${project}_${platform}_${vregion}_${db}"
 outdir="$(normalize_path "$(cfg outdir "")")"
-if is_na "$outdir"; then
-  outdir="$default_outdir"
-fi
+is_na "$outdir" && outdir="$default_outdir"
 
 bamoutdir="${outdir}/bam"
 logdir="${outdir}/logs"
@@ -272,10 +259,7 @@ declare -a planned_read1=()
 declare -a planned_read2=()
 
 add_plan() {
-  local sample="$1"
-  local preset="$2"
-  local read1="$3"
-  local read2="${4:-}"
+  local sample="$1" preset="$2" read1="$3" read2="${4:-}"
   planned_samples+=("$sample")
   planned_presets+=("$preset")
   planned_read1+=("$read1")
@@ -295,14 +279,11 @@ plan_single_reads() {
 }
 
 plan_illumina_paired() {
-  if is_na "$pair_pattern"; then
-    pair_pattern=""
-  fi
+  is_na "$pair_pattern" && pair_pattern=""
   local r1_suffix="${pair_pattern}_R1${suffix}"
   local r2_suffix="${pair_pattern}_R2${suffix}"
   local r1_files=("$indir"/*"$r1_suffix")
   [[ "${#r1_files[@]}" -gt 0 ]] || fail "No Illumina R1 files ending with '$r1_suffix' found in $indir"
-
   for r1 in "${r1_files[@]}"; do
     local filename sample r2
     filename="$(basename "$r1")"
@@ -311,7 +292,6 @@ plan_illumina_paired() {
     [[ -f "$r2" ]] || fail "Missing R2 pair for sample '$sample': $r2"
     add_plan "$sample" "sr" "$r1" "$r2"
   done
-
   local r2_files=("$indir"/*"$r2_suffix")
   for r2 in "${r2_files[@]}"; do
     local filename sample r1
@@ -330,15 +310,9 @@ case "$platform" in
       *) fail "For Illumina, reads must be paired or merged; got '$reads'." ;;
     esac
     ;;
-  ONT)
-    plan_single_reads "map-ont"
-    ;;
-  PacBio)
-    plan_single_reads "map-pb"
-    ;;
-  *)
-    fail "platform must be Illumina, ONT, or PacBio; got '$platform'."
-    ;;
+  ONT) plan_single_reads "map-ont" ;;
+  PacBio) plan_single_reads "map-pb" ;;
+  *) fail "platform must be Illumina, ONT, or PacBio; got '$platform'." ;;
 esac
 
 info "Output directory: $outdir"
@@ -348,14 +322,11 @@ info "Reference index: $index"
 info "Samples planned: ${#planned_samples[@]}"
 
 if [[ "$debug" == "TRUE" || "$debug" == "T" || "$debug" == "true" ]]; then
-  for i in "${!planned_samples[@]}"; do
-    info "  ${planned_samples[$i]}: ${planned_read1[$i]} ${planned_read2[$i]}"
-  done
+  for i in "${!planned_samples[@]}"; do info "  ${planned_samples[$i]}: ${planned_read1[$i]} ${planned_read2[$i]}"; done
 fi
 
 db_dir_abs="$(abs_dir "$db_dir")"
 indir_abs="$(abs_dir "$indir")"
-bamoutdir_abs="$(abs_dir "$bamoutdir")"
 tmpdir_abs="$(abs_dir "$tmpdir")"
 
 parabricks_available=0
@@ -369,9 +340,7 @@ fi
 choose_backend() {
   local preset="$1"
   case "$mapper_backend" in
-    mm2-fast|minimap2|cpu)
-      printf '%s' "minimap2"
-      ;;
+    mm2-fast|minimap2|cpu) printf '%s' "minimap2" ;;
     parabricks)
       parabricks_supports_preset "$preset" || fail "Parabricks minimap2 does not support preset '$preset'; use mapper_backend=auto or mm2-fast."
       [[ "$parabricks_available" -eq 1 ]] || fail "mapper_backend=parabricks requested, but scripts/test_CUDA.sh did not pass."
@@ -404,12 +373,8 @@ declare -a failed=()
 declare -a dry_planned=()
 
 map_sample() {
-  local sample="$1"
-  local preset="$2"
-  local read1="$3"
-  local read2="${4:-}"
+  local sample="$1" preset="$2" read1="$3" read2="${4:-}"
   local safe_sample outbam tmpbam log split_prefix started ended status sample_backend
-
   safe_sample="$(safe_name "$sample")"
   outbam="${bamoutdir}/${sample}.bam"
   tmpbam="${tmpdir}/${safe_sample}.$$.bam"
@@ -419,22 +384,19 @@ map_sample() {
 
   if [[ "$FORCE" -eq 0 && -s "$outbam" && -s "${outbam}.bai" ]]; then
     info "Skipping existing BAM: $outbam"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\tskipped\t%s\t%s\t%s\n' \
-      "$sample" "$platform" "$preset" "$read1" "$read2" "$outbam" "$log" "$(date -Is)" "$(date -Is)" >> "$manifest"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\tskipped\t%s\t%s\t%s\n' "$sample" "$platform" "$preset" "$read1" "$read2" "$outbam" "$log" "$(date -Is)" "$(date -Is)" >> "$manifest"
     return 2
   fi
 
   started="$(date -Is)"
   if [[ "$DRY_RUN" -eq 1 ]]; then
     info "Planning sample '$sample' with preset '$preset' using backend '$sample_backend'..."
-    printf '%s\t%s\t%s\t%s\t%s\t%s\tplanned\t%s\t%s\t%s\n' \
-      "$sample" "$platform" "$preset" "$read1" "$read2" "$outbam" "$log" "$started" "$(date -Is)" >> "$manifest"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\tplanned\t%s\t%s\t%s\n' "$sample" "$platform" "$preset" "$read1" "$read2" "$outbam" "$log" "$started" "$(date -Is)" >> "$manifest"
     return 3
   fi
 
   info "Mapping sample '$sample' with preset '$preset' using backend '$sample_backend'..."
   info "  log: $log"
-
   set +e
   (
     set -Eeuo pipefail
@@ -443,41 +405,18 @@ map_sample() {
     echo "backend: $sample_backend"
     echo "preset: $preset"
     echo "index: $index"
-    if [[ -n "$mm2_ref_path" ]]; then echo "ref: $mm2_ref_path"; fi
+    [[ -n "$mm2_ref_path" ]] && echo "ref: $mm2_ref_path"
     echo "read1: $read1"
-    if [[ -n "$read2" ]]; then echo "read2: $read2"; fi
+    [[ -n "$read2" ]] && echo "read2: $read2"
     echo "bam: $outbam"
     echo
 
     if [[ "$sample_backend" == "parabricks" ]]; then
       declare -a pb_cmd pb_extra
-      pb_cmd=(
-        docker run --rm --gpus "$parabricks_num_gpus"
-        --volume "${db_dir_abs}:/db:ro"
-        --volume "${indir_abs}:/reads:ro"
-        --volume "${tmpdir_abs}:/tmpdir"
-        --workdir /tmpdir
-        "$parabricks_image"
-        pbrun minimap2
-        --ref "/db/${mm2_ref_rel}"
-        --index "/db/${mm2_index}"
-        --in-fq "/reads/$(basename "$read1")"
-        --out-bam "/tmpdir/$(basename "$tmpbam")"
-        --preset "$preset"
-        --num-threads "$nproc"
-        --num-gpus "$parabricks_num_gpus"
-        --tmp-dir /tmpdir
-      )
-      if [[ -n "$read2" ]]; then
-        pb_cmd+=("/reads/$(basename "$read2")")
-      fi
-      if [[ -n "$parabricks_extra_flags" ]]; then
-        read -r -a pb_extra <<< "$parabricks_extra_flags"
-        pb_cmd+=("${pb_extra[@]}")
-      fi
-      printf 'command:'
-      printf ' %q' "${pb_cmd[@]}"
-      printf '\n\n'
+      pb_cmd=(docker run --rm --gpus "$parabricks_num_gpus" --volume "${db_dir_abs}:/db:ro" --volume "${indir_abs}:/reads:ro" --volume "${tmpdir_abs}:/tmpdir" --workdir /tmpdir "$parabricks_image" pbrun minimap2 --ref "/db/${mm2_ref_rel}" --index "/db/${mm2_index}" --in-fq "/reads/$(basename "$read1")" --out-bam "/tmpdir/$(basename "$tmpbam")" --preset "$preset" --num-threads "$nproc" --num-gpus "$parabricks_num_gpus" --tmp-dir /tmpdir)
+      [[ -n "$read2" ]] && pb_cmd+=("/reads/$(basename "$read2")")
+      if [[ -n "$parabricks_extra_flags" ]]; then read -r -a pb_extra <<< "$parabricks_extra_flags"; pb_cmd+=("${pb_extra[@]}"); fi
+      printf 'command:'; printf ' %q' "${pb_cmd[@]}"; printf '\n\n'
       "${pb_cmd[@]}"
     else
       if [[ -n "$read2" ]]; then
@@ -490,7 +429,6 @@ map_sample() {
           "$samtools_bin" sort -@ "$nproc" -o "$tmpbam" -
       fi
     fi
-
     "$samtools_bin" index -@ "$nproc" "$tmpbam"
   ) > "$log" 2>&1
   status=$?
@@ -500,15 +438,13 @@ map_sample() {
   if [[ "$status" -eq 0 ]]; then
     mv -f "$tmpbam" "$outbam"
     mv -f "${tmpbam}.bai" "${outbam}.bai"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\tmapped\t%s\t%s\t%s\n' \
-      "$sample" "$platform" "$preset" "$read1" "$read2" "$outbam" "$log" "$started" "$ended" >> "$manifest"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\tmapped\t%s\t%s\t%s\n' "$sample" "$platform" "$preset" "$read1" "$read2" "$outbam" "$log" "$started" "$ended" >> "$manifest"
     info "Finished sample '$sample'."
     return 0
   fi
 
   rm -f "$tmpbam" "${tmpbam}.bai"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\tfailed\t%s\t%s\t%s\n' \
-    "$sample" "$platform" "$preset" "$read1" "$read2" "$outbam" "$log" "$started" "$ended" >> "$manifest"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\tfailed\t%s\t%s\t%s\n' "$sample" "$platform" "$preset" "$read1" "$read2" "$outbam" "$log" "$started" "$ended" >> "$manifest"
   warn "Mapping failed for sample '$sample'. Last log lines:"
   tail -n 20 "$log" >&2 || true
   return "$status"
@@ -530,9 +466,7 @@ info "Mapping summary"
 info "  planned: ${#planned_samples[@]}"
 info "  mapped:  ${#mapped[@]}"
 info "  skipped: ${#skipped[@]}"
-if [[ "$DRY_RUN" -eq 1 ]]; then
-  info "  dry-run: ${#dry_planned[@]}"
-fi
+[[ "$DRY_RUN" -eq 1 ]] && info "  dry-run: ${#dry_planned[@]}"
 info "  failed:  ${#failed[@]}"
 info "  manifest: $manifest"
 
