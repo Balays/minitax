@@ -125,9 +125,7 @@ if (Sys.info()[["sysname"]] == 'Windows') {
 minitax.dir <- config$minitax.dir
 source_required <- function(base.dir, rel.path) {
   path <- file.path(base.dir, rel.path)
-  if (!file.exists(path)) {
-    stop("Required source file not found: ", path, call. = FALSE)
-  }
+  if (!file.exists(path)) stop("Required source file not found: ", path, call. = FALSE)
   source(path)
 }
 
@@ -160,9 +158,7 @@ outdir    <- if (is_config_na(config$outdir)) default.outdir else config$outdir
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
 outdir.label <- basename(gsub("[/\\\\]+$", "", outdir))
 if (is_config_na(outdir.label)) outdir.label <- "minitax"
-method_result_path <- function(methods, suffix) {
-  file.path(outdir, paste0(outdir.label, "_", methods, suffix))
-}
+method_result_path <- function(methods, suffix) file.path(outdir, paste0(outdir.label, "_", methods, suffix))
 
 bam.all.out      <- paste0(outdir, '/', 'bam.all.tsv')
 bamstats.all.out <- paste0(outdir, '/', 'bamstats.tsv')
@@ -216,21 +212,15 @@ import_database <- function(db, db.dir) {
     db.uni.data <- fread(db.uni.path, header = TRUE, na.strings = c('', 'NA'))
     required.cols <- c('seqnames', 'taxid', ranks)
     missing.cols <- setdiff(required.cols, colnames(db.uni.data))
-    if (length(missing.cols) > 0) {
-      stop("ncbi_refseq_16S database table is missing required column(s): ", paste(missing.cols, collapse = ', '), call. = FALSE)
-    }
+    if (length(missing.cols) > 0) stop("ncbi_refseq_16S database table is missing required column(s): ", paste(missing.cols, collapse = ', '), call. = FALSE)
     setkeyv(db.uni.data, 'seqnames')
 
   } else if (db == 'GTDB_SSU') {
     gtdb.tax.path <- file.path(db.dir, 'gtdb_ssu_taxonomy.tsv')
-    if (!file.exists(gtdb.tax.path)) {
-      stop("GTDB_SSU database selected, but taxonomy file was not found: ", gtdb.tax.path, call. = FALSE)
-    }
+    if (!file.exists(gtdb.tax.path)) stop("GTDB_SSU database selected, but taxonomy file was not found: ", gtdb.tax.path, call. = FALSE)
     gtdb.tax <- fread(gtdb.tax.path, header = FALSE, sep = '\t', col.names = c('seqnames', 'lineage_raw'), na.strings = c('', 'NA'))
     lineage_split <- tstrsplit(gtdb.tax$lineage_raw, ';', fixed = TRUE)
-    if (length(lineage_split) < length(ranks)) {
-      stop("GTDB lineage has fewer than ", length(ranks), " ranks in ", gtdb.tax.path, call. = FALSE)
-    }
+    if (length(lineage_split) < length(ranks)) stop("GTDB lineage has fewer than ", length(ranks), " ranks in ", gtdb.tax.path, call. = FALSE)
     for (i in seq_along(ranks)) gtdb.tax[, (ranks[i]) := lineage_split[[i]]]
     for (r in ranks) {
       gtdb.tax[, (r) := sub('^[a-z]__', '', get(r))]
@@ -242,19 +232,19 @@ import_database <- function(db, db.dir) {
     setkeyv(db.uni.data, 'seqnames')
 
   } else {
-    db.data <- fread(file.path(db.dir, 'db_data.tsv'), header = TRUE, na.strings = '')
+    db.data <- fread(file.path(db.dir, 'db_data.tsv'), header = TRUE, na.strings = c('', 'NA'))
     db.uni.data <- db.data
     message('Using generic db_data.tsv database import for custom database: ', db)
-    try({ ranks <- unlist(strsplit(config$ranks, ', ')) })
-    if (!exists('ranks')) ranks <- setdiff(colnames(db.uni.data), c('seqnames', 'taxid'))
+    if ('ranks' %in% names(config) && !is_config_na(config$ranks)) {
+      ranks <- unlist(strsplit(config$ranks, ', '))
+    } else {
+      ranks <- setdiff(colnames(db.uni.data), c('seqnames', 'taxid'))
+    }
   }
 
   if (is.data.table(db.uni.data)) {
-    if ('seqnames' %in% colnames(db.uni.data)) {
-      setkeyv(db.uni.data, 'seqnames')
-    } else if ('taxid' %in% colnames(db.uni.data)) {
-      setkeyv(db.uni.data, 'taxid')
-    }
+    if ('seqnames' %in% colnames(db.uni.data)) setkeyv(db.uni.data, 'seqnames')
+    else if ('taxid' %in% colnames(db.uni.data)) setkeyv(db.uni.data, 'taxid')
   }
 
   list(db.data = db.data, db.uni.data = db.uni.data, db.name = db, ranks = ranks)
@@ -272,11 +262,7 @@ message('The following taxon levels will be used: ', paste0(ranks, collapse='; '
 #### Metadata and BAM files ####
 pardir    <- file.path(outdir, 'bam')
 pattern   <- '.bam'
-bamfiles  <- if (dir.exists(pardir)) {
-  grep('\\.bai$', list.files(pardir, pattern = pattern), value = TRUE, invert = TRUE)
-} else {
-  character()
-}
+bamfiles  <- if (dir.exists(pardir)) grep('\\.bai$', list.files(pardir, pattern = pattern), value = TRUE, invert = TRUE) else character()
 cached.taxa.files <- list.files(file.path(outdir, 'best_alignments_w_taxa'), '.*_best_alignments_w_taxa\\.tsv$', full.names = TRUE)
 if (length(bamfiles) == 0 && length(cached.taxa.files) == 0) {
   stop("No BAM files found in ", pardir, " and no cached best_alignments_w_taxa files found.", call. = FALSE)
@@ -375,6 +361,48 @@ record_timing <- function(timing.dt) {
   invisible(NULL)
 }
 
+make_phyloseq_safe <- function(methods, taxa.sum) {
+  taxa.for.ps <- copy(taxa.sum)
+  if (methods == 'SpeciesEstimate') {
+    taxa.for.ps[, count := norm_count]
+  }
+  if (!'count' %in% colnames(taxa.for.ps)) {
+    stop("Cannot create phyloseq object: count column is missing.", call. = FALSE)
+  }
+  taxa.for.ps <- taxa.for.ps[, c('tax.identity', 'lineage', ranks, 'sample', 'count'), with = FALSE]
+  taxa.for.ps[is.na(lineage) | lineage == '', lineage := 'unclassified']
+  taxa.for.ps[is.na(tax.identity) | tax.identity == '', tax.identity := lineage]
+  for (r in ranks) {
+    taxa.for.ps[is.na(get(r)) | get(r) == '', (r) := 'unclassified']
+  }
+  taxa.for.ps[, count := as.numeric(count)]
+  taxa.for.ps[is.na(count), count := 0]
+
+  ## Several MAG contigs or unresolved taxa can collapse to the same lineage within a sample.
+  ## phyloseq requires one OTU row per lineage, so aggregate before dcast and rowname assignment.
+  taxa.agg <- taxa.for.ps[, .(count = sum(count, na.rm = TRUE)), by = c('lineage', 'sample')]
+  otutab.dt <- dcast.data.table(taxa.agg, lineage ~ sample, value.var = 'count', fill = 0, fun.aggregate = sum)
+  otutab <- data.frame(otutab.dt[, -1, with = FALSE], row.names = make.unique(as.character(otutab.dt$lineage)))
+
+  tax.cols <- c('lineage', ranks, 'tax.identity')
+  taxtab.dt <- unique(taxa.for.ps[, ..tax.cols])
+  setorder(taxtab.dt, lineage)
+  taxtab.dt <- taxtab.dt[, .SD[1], by = lineage]
+  taxtab <- data.frame(taxtab.dt[, c(ranks, 'tax.identity'), with = FALSE], row.names = as.character(taxtab.dt$lineage))
+  taxtab <- taxtab[rownames(otutab), , drop = FALSE]
+
+  sample_data <- metadata
+  sample_data$method <- methods
+
+  ps <- phyloseq(
+    otu_table(as.matrix(otutab), taxa_are_rows = TRUE),
+    tax_table(as.matrix(taxtab)),
+    sample_data(sample_data)
+  )
+  sample_names(ps) <- paste(sample_data(ps)$workflow, sample_data(ps)$db, sample_data(ps)$method, sample_names(ps), sep = '_')
+  ps
+}
+
 write_method_outputs <- function(methods, taxa.sum) {
   setDT(taxa.sum)
   saveRDS(taxa.sum, method_result_path(methods, '_taxa.all.sum.rds'))
@@ -387,26 +415,10 @@ write_method_outputs <- function(methods, taxa.sum) {
     return(invisible(NULL))
   }
 
-  ps <- NULL
-  taxa.for.ps <- copy(taxa.sum)
-  try({
-    if (methods == 'SpeciesEstimate') taxa.for.ps[, count := norm_count]
-    sample_data <- metadata
-    sample_data$method <- methods
-    taxa.for.ps <- taxa.for.ps[, c('tax.identity', 'lineage', ranks, 'sample', 'count'), with = FALSE]
-    taxa.for.ps[is.na(tax.identity), c('tax.identity', 'lineage', ranks) := 'unclassified']
-    otutab <- dcast.data.table(taxa.for.ps, lineage ~ sample, value.var = 'count', fill = 0)
-    otutab <- data.frame(otutab[, -1, with = FALSE], row.names = otutab$lineage)
-    taxtab <- data.frame(unique(taxa.for.ps[, c('lineage', ranks, 'tax.identity'), with = FALSE]))
-    rownames(taxtab) <- taxtab$lineage
-    taxtab <- taxtab[rownames(otutab), ]
-    ps <- phyloseq(otu_table(as.matrix(otutab), taxa_are_rows = TRUE), tax_table(as.matrix(taxtab)), sample_data(sample_data))
-    sample_names(ps) <- paste(sample_data(ps)$workflow, sample_data(ps)$db, sample_data(ps)$method, sample_names(ps), sep = '_')
-    message('Generated phyloseq object: ')
-    print(ps)
-    saveRDS(ps, method_result_path(methods, '_PS.rds'))
-  })
-  if (is.null(ps)) stop("phyloseq object could not be created!")
+  ps <- make_phyloseq_safe(methods, taxa.sum)
+  message('Generated phyloseq object: ')
+  print(ps)
+  saveRDS(ps, method_result_path(methods, '_PS.rds'))
   invisible(NULL)
 }
 
