@@ -5,94 +5,99 @@ minitax2 <- function(minimap2, db='proGcontigs', db.data=prog.db, db.uni.data=NU
   
   require(tidyr)
   require(dplyr)
-  #require(progressr)
   require(data.table)
   
   dup       <- function(x) x[duplicated(x)]
   luniq     <- function (x) length(unique(x))
   luniq.df  <- function (x) apply(x, 2, luniq)
-  #luniq(minimap2$qname)
-  #length(dup(minimap2$qname))
   try({ minimap2 <- setnames(minimap2, old='seqnames', new='rname')})
+  minimap2 <- data.table::as.data.table(minimap2)
   
-         if (db=='proGcontigs_2') {
-    #db.data <- prog.db
+  validate_seqname_db <- function(db.uni.data, ranks) {
     if (is.null(db.uni.data)) {
-      prog.db.uni      <- db.data %>% distinct(across(all_of(c('taxid', ranks)))) } #unique.data.frame(db.data[,c('taxid', ranks)]) 
+      stop("db.uni.data is NULL. Custom and sequence-name based databases require a taxonomy table with seqnames, taxid, and rank columns.", call. = FALSE)
+    }
+    db.uni.data <- data.table::as.data.table(db.uni.data)
+    cols <- c('seqnames', 'taxid', ranks)
+    missing.cols <- setdiff(cols, colnames(db.uni.data))
+    if (length(missing.cols) > 0) {
+      stop("The database table for db='", db, "' is missing required column(s): ",
+           paste(missing.cols, collapse = ", "), call. = FALSE)
+    }
+    db.uni.data
+  }
+  
+  join_seqname_db <- function(minimap2, db.uni.data, ranks) {
+    cols <- c('seqnames', 'taxid', ranks)
+    db.uni.data <- validate_seqname_db(db.uni.data, ranks)
+    
+    minimap2.contigs <- minimap2[, c('qname', 'rname', 'flag', 'mapq', 'cigar')]
+    minimap2.contigs[, rname := as.character(rname)]
+    minimap2.contigs[, rname := sub("\\s.*$", "", rname)]
+    
+    db.uni.sub <- data.table::copy(db.uni.data[, ..cols])
+    db.uni.sub[, seqnames := as.character(seqnames)]
+    db.uni.sub[, taxid := as.character(taxid)]
+    for (rank in ranks) {
+      db.uni.sub[, (rank) := as.character(get(rank))]
+    }
+    data.table::setkeyv(db.uni.sub, 'seqnames')
+    
+    minimap2.taxa <- db.uni.sub[minimap2.contigs, on = .(seqnames = rname), nomatch = 0]
+    if (nrow(minimap2.taxa) == 0) {
+      example.rnames <- paste(utils::head(unique(minimap2.contigs$rname), 5), collapse = ", ")
+      example.seqnames <- paste(utils::head(unique(db.uni.sub$seqnames), 5), collapse = ", ")
+      stop("No alignments could be joined to the database taxonomy table for db='", db, "'. ",
+           "Check that BAM reference names match db_data.tsv seqnames. ",
+           "Example BAM rname(s): ", example.rnames, ". ",
+           "Example db seqnames: ", example.seqnames, call. = FALSE)
+    }
+    data.table::setnames(minimap2.taxa, 'seqnames', 'rname')
+    unique(minimap2.taxa, by = c("qname", "mapq", "taxid", ranks))
+  }
+  
+  if (db=='proGcontigs_2') {
+    if (is.null(db.uni.data)) {
+      prog.db.uni <- db.data %>% distinct(across(all_of(c('taxid', ranks))))
+    }
     minimap2.contigs <- data.table(taxid=as.numeric(gsub('\\..*', '', minimap2$rname)), minimap2[,c('qname', 'rname', 'flag', 'mapq', 'cigar')])
-    minimap2.taxa    <- data.table::merge.data.table(minimap2.contigs, prog.db.uni, by='taxid', all=F) #type = "inner")
-    taxa.contigs     <- unique(minimap2.taxa, by=c( "qname", "mapq","taxid", ranks))
+    minimap2.taxa    <- data.table::merge.data.table(minimap2.contigs, prog.db.uni, by='taxid', all=F)
+    taxa.contigs     <- unique(minimap2.taxa, by=c("qname", "mapq", "taxid", ranks))
     
   } else if (db=='proGcontigs_3.host' | db=='proGcontigs_3.repres') {
-    #db.data <- prog.db
     if (is.null(db.uni.data)) {
-      prog.db.uni      <- db.data %>% distinct(across(all_of(c('seqnames', ranks)))) } #unique.data.frame(db.data[,c('taxid', ranks)]) 
+      prog.db.uni <- db.data %>% distinct(across(all_of(c('seqnames', ranks))))
+    }
     minimap2.contigs <- data.table(taxid=as.numeric(gsub('\\..*', '', minimap2$rname)), minimap2[,c('qname', 'rname', 'flag', 'mapq', 'cigar')])
-    #minimap2.contigs <- minimap2
-    minimap2.taxa    <- data.table::merge.data.table(minimap2.contigs, prog.db.uni, by.x='rname', by.y='seqnames', all=F) #type = "inner")
-    taxa.contigs     <- unique(minimap2.taxa, by=c( "qname", "mapq","taxid", ranks))
+    minimap2.taxa    <- data.table::merge.data.table(minimap2.contigs, prog.db.uni, by.x='rname', by.y='seqnames', all=F)
+    taxa.contigs     <- unique(minimap2.taxa, by=c("qname", "mapq", "taxid", ranks))
     
   } else if (db == 'rrnDB') {
-    
     minimap2.contigs <- minimap2[,c('taxid', 'qname', 'rname', 'flag', 'mapq')]
     taxa.contigs     <- minimap2[,c("taxid", "qname", "mapq", 'taxid', ranks)]
     
   } else if (db == 'mouse.toy') {
-    #db.data <- mgtoy.idx
     taxa.contigs <- unique.data.frame(merge(minimap2, db.data[,c('seq_id', 'taxid', ranks)], by.x='rname', by.y='seq_id'))
     
   } else if (db == 'EMUdb') {
-    #db.data <- emu.db
     cols <- c('taxid', ranks)
     minimap2.contigs <- data.table(taxid=as.numeric(gsub(':.*', '', minimap2$rname)), minimap2[,c('qname', 'rname', 'flag', 'mapq', 'cigar')])
     taxa.contigs     <- unique(merge(minimap2.contigs[,c("taxid", "qname", "mapq", 'cigar')], db.uni.data[,..cols], by='taxid'))
     
-  } else if (db %in% c('all_NCBI_genomes', 'GTDB_SSU', 'ncbi_refseq_16S')) {
-    
-    cols <- c('seqnames', 'taxid', ranks)
-    
-    missing.cols <- setdiff(cols, colnames(db.uni.data))
-    if (length(missing.cols) > 0) {
-      stop("The database table is missing required column(s): ",
-           paste(missing.cols, collapse = ", "), call. = FALSE)
-    }
-    
-    minimap2.contigs <- minimap2[, c('qname', 'rname', 'flag', 'mapq', 'cigar')]
-    
-    # BAM/SAM rname should normally already be the first FASTA-header token
-    # but this makes the code robust if whitespace-containing headers leak through.
-    minimap2.contigs[, rname := sub("\\s.*$", "", rname)]
-    
-    db.uni.sub <- db.uni.data[, ..cols]
-    if (!data.table::haskey(db.uni.sub)) setkeyv(db.uni.sub, 'seqnames')
-    
-    minimap2.taxa <- db.uni.sub[minimap2.contigs, on = .(seqnames = rname), nomatch = 0]
-    setnames(minimap2.taxa, 'seqnames', 'rname')
-    
-    taxa.contigs <- unique(minimap2.taxa, by = c("qname", "mapq", "taxid", ranks))
-    
   } else {
-    
-    stop('db must be one of the supported databases: proGcontigs_2, proGcontigs_3.host, proGcontigs_3.repres, rrnDB, mouse.toy, EMUdb, all_NCBI_genomes, GTDB_SSU, ncbi_refseq_16S', call. = FALSE)
-    
+    ## Generic sequence-name database path.
+    ## This covers all_NCBI_genomes, GTDB_SSU, ncbi_refseq_16S, and any custom db_data.tsv
+    ## with columns: seqnames, taxid, and the configured rank columns.
+    taxa.contigs <- join_seqname_db(minimap2, db.uni.data, ranks)
   }
   
   rank.df <- data.frame(rank=ranks, rank.level=c(1:length(ranks)))
-  #colnames(rank.df)[2] <- 'min.rank'
-  
   tax.df <- data.table(taxa.contigs)
   tax.df[tax.df == ' '] <- NA
   
   rm(taxa.contigs, minimap2.contigs)
   
-  
-  # Assuming 'dt' is your data table and the columns are in order from 'superkingdom' to 'species'
-  #rank_cols <- c('superkingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species')
-  
-  # Reverse the column order since we want to start from 'species'
   rank_cols <- rev(ranks)
-  
-  # Function to find the lowest common rank for each qname
   lowest_common_rank <- function(x) {
     for (rank in rank_cols) {
       unique_taxa <- unique(x[[rank]], na.rm = TRUE)
@@ -102,13 +107,11 @@ minitax2 <- function(minimap2, db='proGcontigs', db.data=prog.db, db.uni.data=NU
     }
     return(data.table(rank = '', taxon = ''))
   }
-  taxa     <- tax.df 
+  
+  taxa <- tax.df
   result <- taxa[, lowest_common_rank(.SD), by = qname]
   result[result == ''] <- NA
-  
   colnames(result)[-1] <- c('tax.identity.level', 'tax.identity')
   taxa <- merge(taxa, result, by='qname')
-    
-  #saveRDS(max_cigar_score, paste0(file, ".rds"))
   return(taxa)
 }
