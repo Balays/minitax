@@ -105,6 +105,13 @@ set_config_default("saveRAM", "FALSE")
 set_config_default("reuse.taxa.cache", "TRUE")
 set_config_default("dt.threads", "1")
 set_config_default("CIGAR_points", "match_score = 1; mismatch_score = -3; insertion_score = -2; deletion_score = -2; gap_opening_penalty = -2; gap_extension_penalty = -1")
+set_config_default("python", "python3")
+set_config_default("export.unmapped.unclassified.fastq", "FALSE")
+set_config_default("export.unmapped.unclassified.gzip", "TRUE")
+set_config_default("export.unmapped.unclassified.force", "FALSE")
+set_config_default("export.unmapped.unclassified.quiet", "FALSE")
+set_config_default("export.unmapped.unclassified.threads", "NA")
+set_config_default("export.unmapped.unclassified.samtools.threads", "0")
 
 nproc <- as.integer(config$nproc)
 if (is.na(nproc) || nproc < 1) {
@@ -156,7 +163,7 @@ platform  <- config$platform
 default.outdir <- paste('minitax', project, platform, Vregion, db, sep = '_')
 outdir    <- if (is_config_na(config$outdir)) default.outdir else config$outdir
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
-outdir.label <- basename(gsub("[/\\\\]+$", "", outdir))
+outdir.label <- basename(gsub("[/\\]+$", "", outdir))
 if (is_config_na(outdir.label)) outdir.label <- "minitax"
 method_result_path <- function(methods, suffix) file.path(outdir, paste0(outdir.label, "_", methods, suffix))
 
@@ -361,6 +368,51 @@ record_timing <- function(timing.dt) {
   invisible(NULL)
 }
 
+run_unmapped_unclassified_fastq_export <- function() {
+  do.export <- parse_logical_config(config$export.unmapped.unclassified.fastq, default = FALSE)
+  if (!do.export) return(invisible(NULL))
+
+  helper <- file.path(minitax.dir, 'scripts/minitax_extract_unmapped_unclassified_fastq.py')
+  if (!file.exists(helper)) {
+    stop('FASTQ export requested, but helper script was not found: ', helper, call. = FALSE)
+  }
+
+  export.threads <- if (is_config_na(config$export.unmapped.unclassified.threads)) {
+    nproc
+  } else {
+    as.integer(config$export.unmapped.unclassified.threads)
+  }
+  if (is.na(export.threads) || export.threads < 1) export.threads <- 1L
+
+  samtools.threads <- as.integer(config$export.unmapped.unclassified.samtools.threads)
+  if (is.na(samtools.threads) || samtools.threads < 0) samtools.threads <- 0L
+
+  args <- c(
+    helper,
+    '--outdir', outdir,
+    '--threads', as.character(export.threads),
+    '--samtools-threads', as.character(samtools.threads)
+  )
+
+  if (parse_logical_config(config$export.unmapped.unclassified.gzip, default = TRUE)) {
+    args <- c(args, '--gzip')
+  }
+  if (parse_logical_config(config$export.unmapped.unclassified.force, default = FALSE)) {
+    args <- c(args, '--force')
+  }
+  if (parse_logical_config(config$export.unmapped.unclassified.quiet, default = FALSE)) {
+    args <- c(args, '--quiet')
+  }
+
+  message('Exporting unmapped and minitax-unclassified reads to FASTQ...')
+  status <- system2(config$python, args = args)
+  if (!identical(status, 0L)) {
+    stop('Unmapped/unclassified FASTQ export failed with exit code: ', status, call. = FALSE)
+  }
+
+  invisible(NULL)
+}
+
 make_phyloseq_safe <- function(methods, taxa.sum) {
   taxa.for.ps <- copy(taxa.sum)
   if (methods == 'SpeciesEstimate') {
@@ -503,6 +555,8 @@ taxa.files <- taxa.files[file.exists(taxa.files)]
 if (length(taxa.files) == 0) stop("No best_alignments_w_taxa cache files are available for summarisation.", call. = FALSE)
 
 for (methods in methods.to.use) run_minitax_method(methods, taxa.files)
+
+run_unmapped_unclassified_fastq_export()
 
 if (length(timing.records) > 0) {
   fwrite(rbindlist(timing.records, fill = TRUE), file.path(outdir, 'classification_timing.tsv'), sep = '\t', na = 'NA')
