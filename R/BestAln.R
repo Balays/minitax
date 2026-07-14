@@ -165,3 +165,49 @@ BestAln <- function(taxa.dup, ranks=ranks, thresholds=thresholds) {
   return(taxa.new.taxident)
 
 }
+
+## Keep large multi-sample runs fault-tolerant during cached summarisation.
+## minitax.complete.R sources this file after R/minitax.wrapfun.complete.R, so this
+## wrapper catches one failed cached sample without aborting the full future_lapply()
+## method run. The failed sample is recorded in classification_timing.tsv with
+## status='failed' and the error message; successful samples are still combined.
+if (exists('summarise_minitax_taxa_file', mode = 'function') &&
+    !exists('.minitax_summarise_minitax_taxa_file_unsafe', inherits = FALSE)) {
+  .minitax_summarise_minitax_taxa_file_unsafe <- summarise_minitax_taxa_file
+
+  summarise_minitax_taxa_file <- function(taxa_or_bamfile, ...) {
+    args <- list(...)
+    methods <- if ('methods' %in% names(args)) args$methods else NA_character_
+    method.label <- if (is.null(methods) || length(methods) == 0 || all(is.na(methods))) {
+      NA_character_
+    } else {
+      paste(as.character(methods), collapse = ';')
+    }
+    sample <- gsub('_best_alignments_w_taxa.tsv$', '', basename(taxa_or_bamfile))
+    started <- Sys.time()
+
+    tryCatch(
+      .minitax_summarise_minitax_taxa_file_unsafe(taxa_or_bamfile, ...),
+      error = function(e) {
+        finished <- Sys.time()
+        msg <- conditionMessage(e)
+        warning('minitax summarisation failed for ', sample,
+                ' [', method.label, ']: ', msg, call. = FALSE)
+        list(
+          taxa.sum = data.table(),
+          timing = data.table(
+            sample = sample,
+            stage = 'summarise',
+            method = method.label,
+            status = 'failed',
+            error = msg,
+            elapsed_sec = as.numeric(difftime(finished, started, units = 'secs')),
+            rows_in = NA_integer_,
+            rows_out = 0L,
+            file = taxa_or_bamfile
+          )
+        )
+      }
+    )
+  }
+}
