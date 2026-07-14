@@ -200,11 +200,28 @@ summarise_minitax_taxa_file <- function(taxa_or_bamfile, config = config,
   on.exit(data.table::setDTthreads(old.threads), add = TRUE)
   started <- Sys.time()
   sample <- gsub('_best_alignments_w_taxa.tsv$', '', basename(taxa_or_bamfile))
+
+  ## BestAln/RandAln only need special handling when at least one read has
+  ## multiple retained alignments after MAPQ/CIGAR filtering. If every qname is
+  ## unique in the cached table, there are no tied alignments to resolve.
+  ## In that case, the BestAln result is identical to the single-alignment
+  ## tax.identity summary, so use the LCA/single-alignment branch internally.
+  methods.for.wrap <- methods
+  if (!is.null(methods) && methods %in% c('BestAln', 'RandAln')) {
+    qname.preview <- fread(taxa_or_bamfile, select = 'qname', showProgress = FALSE)
+    if (nrow(qname.preview) > 0L && anyDuplicated(qname.preview$qname) == 0L) {
+      message('No tied alignments in cache for ', sample,
+              '; using single-alignment summarisation internally for ', methods, '.')
+      methods.for.wrap <- 'LCA'
+    }
+    rm(qname.preview)
+  }
+
   taxa.sum <- wrap.fun.complete(
     taxa_or_bamfile,
     config = config,
     input = 'taxa.DT',
-    methods = methods,
+    methods = methods.for.wrap,
     keep.max.cigar = keep.max.cigar,
     CIGAR_points = CIGAR_points,
     mapq.filt = mapq.filt,
@@ -536,21 +553,28 @@ wrap.fun.complete <- function(taxa_or_bamfile, pattern='.bam', sample=NULL,
       #### #####
 
 
-      ## Add taxonomic lineage from database based on tax.identity and tax.identity level
-      cols_by        <- c('qname', 'aln_nr', 'sample', ranks, 'tax.identity', 'tax.identity.level')
-      taxa.nodupuni  <- unique(taxa.nodup[, ..cols_by] )
-      taxa.nodupuni  <- add_lineage(data = taxa.nodupuni, ranks, db.uni.data)
+      ## Add taxonomic lineage from database based on tax.identity and tax.identity level.
+      ## If no reads had tied MAPQ/CIGAR scores, taxa.dup/taxa.nodup can be empty.
+      ## In that case there is nothing to refine, so skip the add_lineage/merge-back block.
+      ## Otherwise data.table::merge() can fail with duplicated by-columns when 'y' has no columns.
+      if (nrow(taxa.nodup) == 0L) {
+        taxa.nodup <- taxa.dup[0]
+      } else {
+        cols_by        <- c('qname', 'aln_nr', 'sample', ranks, 'tax.identity', 'tax.identity.level')
+        taxa.nodupuni  <- unique(taxa.nodup[, ..cols_by] )
+        taxa.nodupuni  <- add_lineage(data = taxa.nodupuni, ranks, db.uni.data)
 
-      ## Merge back the updated tax.identity with the read info
-      cols_by        <- colnames(taxa)[!colnames(taxa) %in% colnames(taxa.nodupuni)]
-      cols_by        <- c(cols_by, 'qname', 'aln_nr', 'sample')
-      taxa.nodupuni  <- merge(taxa[,..cols_by], taxa.nodupuni[,], by=c('qname', 'aln_nr', 'sample'), all.y=T)
+        ## Merge back the updated tax.identity with the read info
+        cols_by        <- colnames(taxa)[!colnames(taxa) %in% colnames(taxa.nodupuni)]
+        cols_by        <- c(cols_by, 'qname', 'aln_nr', 'sample')
+        taxa.nodupuni  <- merge(taxa[,..cols_by], taxa.nodupuni[,], by=c('qname', 'aln_nr', 'sample'), all.y=T)
 
-      cols_by        <- colnames(taxa.dup)
-      taxa.nodupuni  <- unique(taxa.nodupuni[,..cols_by] )
+        cols_by        <- colnames(taxa.dup)
+        taxa.nodupuni  <- unique(taxa.nodupuni[,..cols_by] )
 
-      ##
-      taxa.nodup     <- taxa.nodupuni
+        ##
+        taxa.nodup     <- taxa.nodupuni
+      }
 
       ## merge with non-multi aligned reads
       taxident.all  <- rbind(taxa.filt, taxa.nodup)
