@@ -166,6 +166,92 @@ BestAln <- function(taxa.dup, ranks=ranks, thresholds=thresholds) {
 
 }
 
+minitax_add_taxid_to_summary <- function(taxa.sum, db.uni.data = NULL, ranks = NULL) {
+  taxa.sum <- data.table::as.data.table(data.table::copy(taxa.sum))
+  if (nrow(taxa.sum) == 0L) return(taxa.sum)
+
+  if (!'taxid' %in% colnames(taxa.sum)) {
+    taxa.sum[, taxid := NA_character_]
+  }
+  taxa.sum[, taxid := as.character(taxid)]
+
+  if (is.null(db.uni.data) || is.null(ranks) || !'taxid' %in% colnames(db.uni.data)) {
+    return(taxa.sum)
+  }
+
+  db.uni.data <- data.table::as.data.table(data.table::copy(db.uni.data))
+  ranks <- intersect(ranks, colnames(db.uni.data))
+  if (length(ranks) == 0L) return(taxa.sum)
+
+  ## SpeciesEstimate summaries initially contain only rank columns. Add temporary
+  ## tax.identity columns so the same unambiguous-rank mapping can be used there.
+  temporary.tax.identity <- FALSE
+  if (!all(c('tax.identity', 'tax.identity.level') %in% colnames(taxa.sum))) {
+    terminal.rank <- tail(intersect(ranks, colnames(taxa.sum)), 1)
+    if (length(terminal.rank) == 1L) {
+      taxa.sum[, tax.identity := as.character(get(terminal.rank))]
+      taxa.sum[, tax.identity.level := terminal.rank]
+      temporary.tax.identity <- TRUE
+    }
+  }
+
+  if (!all(c('tax.identity', 'tax.identity.level') %in% colnames(taxa.sum))) {
+    return(taxa.sum)
+  }
+
+  db.uni.data[, taxid := as.character(taxid)]
+  rank.maps <- lapply(ranks, function(rank) {
+    if (!rank %in% colnames(db.uni.data)) return(data.table::data.table())
+    x <- db.uni.data[!is.na(get(rank)) & get(rank) != '' &
+                       !is.na(taxid) & taxid != '',
+                     .(tax.identity = as.character(get(rank)), taxid = as.character(taxid))]
+    x <- unique(x)
+    if (nrow(x) == 0L) return(data.table::data.table())
+    x <- x[, .(taxid.mapped = if (data.table::uniqueN(taxid) == 1L) unique(taxid) else NA_character_),
+           by = tax.identity]
+    x[, tax.identity.level := rank]
+    x
+  })
+  taxid.map <- data.table::rbindlist(rank.maps, fill = TRUE)
+  taxid.map <- taxid.map[!is.na(taxid.mapped) & taxid.mapped != '']
+  if (nrow(taxid.map) == 0L) {
+    if (temporary.tax.identity) {
+      taxa.sum[, tax.identity := NULL]
+      taxa.sum[, tax.identity.level := NULL]
+    }
+    return(taxa.sum)
+  }
+
+  taxa.sum[, row_id__minitax_taxid := .I]
+  taxa.sum[, tax.identity := as.character(tax.identity)]
+  taxa.sum[, tax.identity.level := as.character(tax.identity.level)]
+  taxid.map[, tax.identity := as.character(tax.identity)]
+  taxid.map[, tax.identity.level := as.character(tax.identity.level)]
+
+  taxa.sum <- merge(
+    taxa.sum,
+    taxid.map,
+    by = c('tax.identity.level', 'tax.identity'),
+    all.x = TRUE,
+    sort = FALSE
+  )
+  taxa.sum[is.na(taxid) | taxid == '', taxid := taxid.mapped]
+  taxa.sum[, taxid.mapped := NULL]
+  data.table::setorder(taxa.sum, row_id__minitax_taxid)
+  taxa.sum[, row_id__minitax_taxid := NULL]
+
+  if (temporary.tax.identity) {
+    taxa.sum[, tax.identity := NULL]
+    taxa.sum[, tax.identity.level := NULL]
+  }
+
+  data.table::setcolorder(
+    taxa.sum,
+    unique(c('sample', 'lineage', 'taxid', setdiff(colnames(taxa.sum), c('sample', 'lineage', 'taxid'))))
+  )
+  taxa.sum
+}
+
 ## Keep large multi-sample runs fault-tolerant during cached summarisation.
 ## minitax.complete.R sources this file after R/minitax.wrapfun.complete.R, so this
 ## wrapper catches one failed cached sample without aborting the full future_lapply()
@@ -187,7 +273,15 @@ if (exists('summarise_minitax_taxa_file', mode = 'function') &&
     started <- Sys.time()
 
     tryCatch(
-      .minitax_summarise_minitax_taxa_file_unsafe(taxa_or_bamfile, ...),
+      {
+        result <- .minitax_summarise_minitax_taxa_file_unsafe(taxa_or_bamfile, ...)
+        if (!is.null(result$taxa.sum) && nrow(result$taxa.sum) > 0L) {
+          db.uni.data <- if ('db.uni.data' %in% names(args)) args$db.uni.data else NULL
+          ranks <- if ('ranks' %in% names(args)) args$ranks else NULL
+          result$taxa.sum <- minitax_add_taxid_to_summary(result$taxa.sum, db.uni.data, ranks)
+        }
+        result
+      },
       error = function(e) {
         finished <- Sys.time()
         msg <- conditionMessage(e)
