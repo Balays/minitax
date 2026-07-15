@@ -15,9 +15,6 @@ assign_most_probable <- function(data, rank, thresholds, ranks) {
   cols_by <- c('sample', 'qname', rank)
   taxon_alignments <- data[!is.na(get(rank)) & get(rank) != '', .(taxon_count = .N), by = cols_by]
   if (nrow(taxon_alignments) == 0) {
-    cols <- c('sample', 'qname', 'tax.identity', 'tax.identity.level', 'tax.identity_rank_level',
-              rank, paste0(rank, c('_count', '_prob', '_most_probable', '_most_probable_rank_level')),
-              paste0('is_', rank, '_most_prob'))
     empty <- data.table(
       sample = character(),
       qname = character(),
@@ -73,13 +70,11 @@ assign_most_probable <- function(data, rank, thresholds, ranks) {
   cols_by <- c('sample', 'qname', 'tax.identity', 'tax.identity.level', 'tax.identity_rank_level',
                grep(rank, colnames(taxon_alignments), value = T))
   return(taxon_alignments[, ..cols_by])
-  #return(taxon_alignments[,])
 }
 
 
 # Function to update the tax.identity based on probability and level
 update_tax_identity <- function(data, rank) {
-
 
   prob_col <- paste0(rank, "_prob")
   most_probable_col <- paste0(rank, "_most_probable")
@@ -114,16 +109,11 @@ update_tax_identity <- function(data, rank) {
   cols <- c('sample', 'qname', 'aln_nr', 'tax.identity', 'tax.identity.level', 'tax.identity_rank_level')
   data.subs <- data.subs[,..cols]
 
-  #cols <- c('sample', 'qname', 'aln_nr', ranks)
-  #data <- data[,..cols]
-
   data <- merge(data[,], data.subs[,],
                 by = c('sample', 'qname', 'aln_nr'))
 
   return(data)
 }
-
-
 
 
 BestAln <- function(taxa.dup, ranks=ranks, thresholds=thresholds) {
@@ -151,17 +141,15 @@ BestAln <- function(taxa.dup, ranks=ranks, thresholds=thresholds) {
 
   ## 2.
   # Apply a Function to update the tax.identity based on probability and level iteratively for each level
-  taxa.new.taxident <- data.table(as.data.frame(taxa.most_prob)) #data.table(NULL)
+  taxa.new.taxident <- data.table(as.data.frame(taxa.most_prob))
 
   for (rank in ranks) {
     message('Refining tax.identity based on ', rank, '...')
 
     taxa.new.taxident <- update_tax_identity(data=taxa.new.taxident, rank)
-    #taxa.newtaxident <- data.table(NULL)
 
   }
 
-  ##
   return(taxa.new.taxident)
 
 }
@@ -245,9 +233,10 @@ minitax_add_taxid_to_summary <- function(taxa.sum, db.uni.data = NULL, ranks = N
     taxa.sum[, tax.identity.level := NULL]
   }
 
+  preferred <- intersect(c('sample', 'lineage', 'taxid'), colnames(taxa.sum))
   data.table::setcolorder(
     taxa.sum,
-    unique(c('sample', 'lineage', 'taxid', setdiff(colnames(taxa.sum), c('sample', 'lineage', 'taxid'))))
+    unique(c(preferred, setdiff(colnames(taxa.sum), preferred)))
   )
   taxa.sum
 }
@@ -271,10 +260,30 @@ if (exists('summarise_minitax_taxa_file', mode = 'function') &&
     }
     sample <- gsub('_best_alignments_w_taxa.tsv$', '', basename(taxa_or_bamfile))
     started <- Sys.time()
+    taxa.input <- taxa_or_bamfile
+    fixed.cache.dir <- NULL
 
     tryCatch(
       {
-        result <- .minitax_summarise_minitax_taxa_file_unsafe(taxa_or_bamfile, ...)
+        ## Older cache files may lack a sample column because wrap.fun.complete()
+        ## historically left taxa$sample <- sample commented out for input='taxa.DT'.
+        ## If such a cache is summarised directly, data.table may pick up base::sample
+        ## as a closure in grouping expressions, which later breaks fwrite().
+        cache.header <- names(data.table::fread(taxa_or_bamfile, nrows = 0, showProgress = FALSE))
+        if (!'sample' %in% cache.header) {
+          message('Cached taxa file has no sample column; adding sample from filename for summarisation: ', sample)
+          fixed.cache.dir <- tempfile('minitax_cache_sample_')
+          dir.create(fixed.cache.dir, recursive = TRUE, showWarnings = FALSE)
+          taxa.input <- file.path(fixed.cache.dir, basename(taxa_or_bamfile))
+          taxa.cache <- data.table::fread(taxa_or_bamfile, na.strings = '', showProgress = FALSE)
+          taxa.cache[taxa.cache == ''] <- NA
+          taxa.cache[, sample := sample]
+          data.table::fwrite(taxa.cache, taxa.input, sep = '\t', na = 'NA')
+          rm(taxa.cache)
+          on.exit(unlink(fixed.cache.dir, recursive = TRUE, force = TRUE), add = TRUE)
+        }
+
+        result <- .minitax_summarise_minitax_taxa_file_unsafe(taxa.input, ...)
         if (!is.null(result$taxa.sum) && nrow(result$taxa.sum) > 0L) {
           db.uni.data <- if ('db.uni.data' %in% names(args)) args$db.uni.data else NULL
           ranks <- if ('ranks' %in% names(args)) args$ranks else NULL
